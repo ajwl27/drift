@@ -60,7 +60,7 @@ Z_MAX = 55.0              # metres of water column mapped to the panel height
 MAX_PHYTO = 30             # separate caps, or phytoplankton crowd out the
 MAX_ZOO = 7                # grazers entirely during a bloom
 IMMIGRATION = 0.7          # new arrivals per day, at any population. See the
-                           # note on _immigrate.
+                           # note in the immigration block of step().
 MAX_AGENTS = MAX_PHYTO + MAX_ZOO   # render cost lives here
 SNOW_COUNT = 80            # fine unresolved detritus, decorative
 MAX_DETRITUS = 46          # resolved particles, from actual deaths
@@ -525,14 +525,19 @@ class Environment:
 # 4. ORGANISMS  -  procedural morphology
 # --------------------------------------------------------------------------
 
-RADIOLARIAN, CENTRIC, PENNATE, CHAIN, CERATIUM, COPEPOD, TINTINNID = range(7)
+(RADIOLARIAN, CENTRIC, PENNATE, CHAIN, CERATIUM, COPEPOD, TINTINNID,
+ COCCO, FLAGELLATE, THALASSIO, RHIZO, CORETHRON, ACANTHARIA, FORAM,
+ ORNITHO, TRICHO, SALP, KRILL) = range(18)
 
 AUTO, MIXO, HETERO = range(3)
 
 KIND_NAME = {
     RADIOLARIAN: "radiolarian", CENTRIC: "centric", PENNATE: "pennate",
     CHAIN: "chain", CERATIUM: "ceratium", COPEPOD: "copepod",
-    TINTINNID: "tintinnid",
+    TINTINNID: "tintinnid", COCCO: "cocco", FLAGELLATE: "flagellate",
+    THALASSIO: "thalassio", RHIZO: "rhizo", CORETHRON: "corethron",
+    ACANTHARIA: "acantharia", FORAM: "foram", ORNITHO: "ornitho",
+    TRICHO: "tricho", SALP: "salp", KRILL: "krill",
 }
 
 # Who eats how.  Diatoms are strict phototrophs.  Ceratium and the
@@ -541,21 +546,51 @@ KIND_NAME = {
 # Copepods and tintinnids are heterotrophs.  The chemoautotrophs are not
 # agents at all; see Ecosystem.nit.
 TROPHY = {
-    CENTRIC: AUTO, PENNATE: AUTO, CHAIN: AUTO,
-    RADIOLARIAN: MIXO, CERATIUM: MIXO,
-    COPEPOD: HETERO, TINTINNID: HETERO,
+    CENTRIC: AUTO, PENNATE: AUTO, CHAIN: AUTO, COCCO: AUTO,
+    FLAGELLATE: AUTO, THALASSIO: AUTO, RHIZO: AUTO, CORETHRON: AUTO,
+    TRICHO: AUTO,
+    RADIOLARIAN: MIXO, CERATIUM: MIXO, ACANTHARIA: MIXO, FORAM: MIXO,
+    ORNITHO: MIXO,
+    COPEPOD: HETERO, TINTINNID: HETERO, SALP: HETERO, KRILL: HETERO,
 }
-PHOTO_KINDS = (CENTRIC, PENNATE, CHAIN)
-MIXO_KINDS = (RADIOLARIAN, CERATIUM)
+PHOTO_KINDS = (CENTRIC, PENNATE, CHAIN, COCCO, FLAGELLATE, THALASSIO,
+               RHIZO, CORETHRON, TRICHO)
+MIXO_KINDS = (RADIOLARIAN, CERATIUM, ACANTHARIA, FORAM, ORNITHO)
 DRIFTER_KINDS = PHOTO_KINDS + MIXO_KINDS      # everything under MAX_PHYTO
-HET_KINDS = (COPEPOD, TINTINNID)
+HET_KINDS = (COPEPOD, TINTINNID, SALP, KRILL)
+
+# Trichodesmium fixes its own nitrogen, so nothing else in the model applies
+# to it in the usual way: no N limitation at all, a hard temperature floor,
+# and an iron demand twenty-five times everyone else's because nitrogenase
+# carries fifteen iron atoms per subunit (Berman-Frank et al. 2001, measured
+# Fe:C of 180-214 against 1-7 for a diatom). Those three numbers are the
+# entire reason the subtropical gyres are habitable, and the reason
+# Trichodesmium is abundant in the dust-fed Atlantic and scarce in the
+# iron-poor Pacific.
+DIAZOTROPHS = (TRICHO,)
+DIAZO_T_MIN = 20.0         # Breitbarth et al. 2007: fixation stops below this
+DIAZO_FE_COST = 25.0
+# Per-grazer housekeeping. Which of them migrate vertically, how efficiently
+# each converts what it eats, and how many of each the panel will carry.
+MIGRATORS = (COPEPOD, KRILL)
+HET_ASSIM = {COPEPOD: 1.4, TINTINNID: 1.1, KRILL: 1.3, SALP: 1.6}
+# Per class, and they must sum to no more than MAX_ZOO or the total cap is a
+# fiction that only the seeding path respects.
+HET_CAP = {COPEPOD: 3, TINTINNID: 2, KRILL: 2, SALP: 2}
 
 # Visual radius as a multiple of the nominal draw radius.  A Chaetoceros
 # chain throws setae out to 3.4r and spans 6r along its axis, so using the
 # bare radius for separation was why everything overlapped.
+# MEASURED, not estimated: every morphology drawn at four radii and twenty-four
+# genomes, and the furthest ink from centre recorded. The hand-guessed values
+# were wrong for half the roster and wrong by a factor of two for the chains,
+# which is exactly the sort of error that shows up as unexplained overlap.
 EXTENT = {
-    RADIOLARIAN: 1.75, CENTRIC: 1.00, PENNATE: 1.05, CHAIN: 2.60,
-    CERATIUM: 1.80, COPEPOD: 1.35, TINTINNID: 1.20,
+    ACANTHARIA: 1.05, CENTRIC: 1.05, CERATIUM: 2.10, CHAIN: 8.40,
+    COCCO: 1.40, COPEPOD: 1.75, CORETHRON: 3.15, FLAGELLATE: 3.50,
+    FORAM: 2.80, KRILL: 2.52, ORNITHO: 1.47, PENNATE: 1.05,
+    RADIOLARIAN: 2.10, RHIZO: 4.90, SALP: 5.60, THALASSIO: 6.65,
+    TINTINNID: 1.47, TRICHO: 3.15,
 }
 
 
@@ -594,6 +629,24 @@ EXTENT = {
 
 ESD_REF = 50.0             # microns; the size the base rates are quoted at
 MU_EXP = -0.75             # per ESD, from Edwards' V^-0.25
+# ...but ONLY above about 20 microns. Extrapolating a monotonic power law down
+# to a 5 micron flagellate says it grows at 4.5 divisions a day, which is
+# roughly double anything ever measured -- and in the model it produced a
+# super-organism with the best growth rate AND the best nutrient affinity that
+# took 97% of the voyage.
+#
+# The real relationship is UNIMODAL. Maranon et al. 2013 showed maximum growth
+# rate peaks at intermediate cell size and falls away on both sides: below the
+# optimum a cell cannot shrink its metabolic machinery in proportion, so the
+# advantage of being small is affinity, not speed. Which is exactly the
+# trade-off the model was missing -- small cells should own the oligotrophic
+# ocean because nothing else can find the nutrients, not because they are also
+# the fastest thing in it.
+ESD_PEAK = 20.0            # microns, where mu_max tops out
+MU_EXP_SMALL = 0.45        # below the peak, growth rate RISES with size.
+                           # 0.70 was too steep -- it put a nanoflagellate at
+                           # 0.6 divisions a day, and they measure 1 to 2.
+                           # Maranon's peak is broad, not sharp.
 K_EXP = 0.90               # per ESD, from Edwards' V^+0.30
 W_EXP = 1.17               # per ESD, from Ward's V^+0.39
 RESP_EXP = -0.75           # Respiration goes as V^0.75, so MASS-SPECIFIC
@@ -647,13 +700,37 @@ T_REF = 15.0
 #              column in under a week and went functionally extinct across the
 #              entire voyage. Motile forms barely sink at all.
 TRAITS = {
-    CHAIN:       ( 40.0, 1.00,  8.0,  8.0, 0.45, 0.30),
-    PENNATE:     ( 30.0, 1.00, 15.0,  9.0, 1.00, 1.00),
-    CENTRIC:     (100.0, 1.00, 20.0,  9.0, 0.45, 0.30),
-    CERATIUM:    (150.0, 0.55, 24.0,  8.0, 0.05, 0.35),
-    RADIOLARIAN: (300.0, 0.55, 25.0, 11.0, 0.10, 0.25),
-    TINTINNID:   ( 60.0, 0.55, 18.0, 12.0, 0.00, 0.60),
-    COPEPOD:     (1500.0, 0.55, 12.0, 14.0, 0.00, 1.00),
+    # -- the small class. Undefended, fast, and eaten by everything: this is
+    #    what the microzooplankton were missing and what a gyre runs on.
+    FLAGELLATE:  (   5.0, 0.55, 18.0, 15.0, 0.00, 1.00),
+    COCCO:       (   8.0, 0.55, 20.0, 12.0, 0.30, 0.45),
+    THALASSIO:   (  15.0, 1.00, 10.0, 10.0, 0.40, 0.60),
+    # -- diatoms, on three distinct thermal niches
+    PENNATE:     (  30.0, 1.00, 15.0,  9.0, 1.00, 1.00),
+    CHAIN:       (  40.0, 1.00,  8.0,  8.0, 0.45, 0.30),
+    CORETHRON:   (  80.0, 1.00,  3.0,  7.0, 0.40, 0.18),
+    CENTRIC:     ( 100.0, 1.00, 20.0,  9.0, 0.45, 0.30),
+    RHIZO:       ( 200.0, 1.00, 18.0, 10.0, 0.12, 0.22),
+    # -- the nitrogen fixer. Slow, warm-restricted, iron-hungry.
+    TRICHO:      ( 500.0, 0.97, 27.0,  6.0, 0.00, 0.15),
+    # Trichodesmium's intercept is set from the measurement, not guessed: it
+    # yields 0.25 divisions a day at its optimum, which is what Breitbarth et
+    # al. 2007 report. The intercept column is exactly where taxon-specific
+    # departure from the allometry belongs, and here it is carrying a real
+    # fact -- a 500 um COLONY is built of small cells, so it has small-cell
+    # physiology with large-cell grazing protection. Sizing it by the colony
+    # alone crushed it to 0.05 a day and it never appeared anywhere.
+    # -- mixotrophs: the gyre's ornate survivors
+    ORNITHO:     ( 100.0, 0.55, 27.0,  7.0, 0.05, 0.28),
+    CERATIUM:    ( 150.0, 0.55, 24.0,  8.0, 0.05, 0.35),
+    RADIOLARIAN: ( 300.0, 0.55, 25.0, 11.0, 0.10, 0.25),
+    ACANTHARIA:  ( 400.0, 0.55, 23.0, 12.0, 0.15, 0.15),
+    FORAM:       ( 500.0, 0.55, 22.0, 13.0, 0.50, 0.25),
+    # -- grazers
+    TINTINNID:   (  60.0, 0.55, 18.0, 12.0, 0.00, 0.60),
+    COPEPOD:     ( 1500.0, 0.55, 12.0, 14.0, 0.00, 1.00),
+    KRILL:       ( 6000.0, 0.55,  4.0,  8.0, 0.00, 1.00),
+    SALP:        ( 5000.0, 0.55, 17.0, 12.0, 0.00, 1.00),
 }
 
 # Optimal predator:prey length ratio, PER FEEDING TYPE.
@@ -675,10 +752,20 @@ TRAITS = {
 # competition. It was a missing predator.
 GRAZE_RATIO = {
     COPEPOD: 18.0,          # Hansen et al. 1994
+    KRILL: 60.0,            # a filter feeder: takes cells far smaller than a
+                            # copepod does relative to its size
+    SALP: 200.0,            # mucous-net filter, effectively unselective
     TINTINNID: 8.0,         # ciliates
     CERATIUM: 3.0,          # dinoflagellates engulf prey near their own size
+    ORNITHO: 3.0,
     RADIOLARIAN: 5.0,       # large rhizarian, catches a wide range on spines
+    ACANTHARIA: 5.0,
+    FORAM: 5.0,
 }
+# Kernel width, per predator. A salp's mucous net is famously indiscriminate
+# -- it takes anything from bacteria to other salps -- so a narrow log-normal
+# would be the wrong shape entirely, not merely the wrong centre.
+GRAZE_W = {SALP: 2.2, KRILL: 1.3}
 GRAZE_SIGMA = 0.90         # width of the kernel, in natural logs. Ward et al.
 # use 0.5; 0.9 here because with only five drifters the size axis is sparse
 # and a narrow kernel leaves gaps that no predator covers. Stage 5's small
@@ -692,8 +779,13 @@ def _derive():
     out = {}
     for k, (esd, icept, topt, twidth, buoy, defence) in TRAITS.items():
         s = esd / ESD_REF
+        if esd >= ESD_PEAK:
+            mu = s ** MU_EXP
+        else:
+            mu = ((ESD_PEAK / ESD_REF) ** MU_EXP
+                  * (esd / ESD_PEAK) ** MU_EXP_SMALL)
         out[k] = (
-            icept * s ** MU_EXP,               # 0 growth multiplier
+            icept * mu,                        # 0 growth multiplier
             s ** K_EXP,                        # 1 half-saturation multiplier
             buoy * s ** W_EXP,                 # 2 sinking multiplier
             topt, twidth,                      # 3, 4
@@ -726,9 +818,9 @@ def graze_pref(pred_kind, prey_kind):
     """Log-normal size preference. A copepod at 1500 um wants prey near
     150 um; a tintinnid at 60 um wants 6 um. Nothing switches on species."""
     ratio = GRAZE_RATIO.get(pred_kind, 10.0)
+    sig = GRAZE_W.get(pred_kind, GRAZE_SIGMA)
     r = DERIVED[pred_kind][6] - DERIVED[prey_kind][6] - math.log(ratio)
-    return (math.exp(-(r * r) / (2.0 * GRAZE_SIGMA * GRAZE_SIGMA))
-            * DERIVED[prey_kind][8])
+    return math.exp(-(r * r) / (2.0 * sig * sig)) * DERIVED[prey_kind][8]
 
 
 class Genome:
@@ -761,6 +853,28 @@ class Genome:
             self.size = rng.uniform(8, 12)
         elif kind == TINTINNID:
             self.size = rng.uniform(7, 10)
+        elif kind == COCCO:
+            self.size = rng.uniform(3.2, 5.0)
+        elif kind == FLAGELLATE:
+            self.size = rng.uniform(3.0, 4.4)
+        elif kind == THALASSIO:
+            self.size = rng.uniform(3.0, 4.6)
+        elif kind == RHIZO:
+            self.size = rng.uniform(4.0, 6.5)
+        elif kind == CORETHRON:
+            self.size = rng.uniform(5.0, 8.0)
+        elif kind == ACANTHARIA:
+            self.size = rng.uniform(9, 15)
+        elif kind == FORAM:
+            self.size = rng.uniform(6, 10)
+        elif kind == ORNITHO:
+            self.size = rng.uniform(7, 11)
+        elif kind == TRICHO:
+            self.size = rng.uniform(5.0, 8.0)
+        elif kind == SALP:
+            self.size = rng.uniform(4.5, 7.0)
+        elif kind == KRILL:
+            self.size = rng.uniform(7, 11)
         else:
             self.size = rng.uniform(8, 12)
 
@@ -844,7 +958,11 @@ def draw_pennate(c, cx, cy, r, ang, g):
     # raphe
     p0 = to_world(-half * 0.86, 0); p1 = to_world(half * 0.86, 0)
     c.line(p0[0], p0[1], p1[0], p1[1])
-    # striae
+    # striae. Gated on size: at r under 5 the cross-lines land on adjacent
+    # pixels and fill the cell in solid, so the lens silhouette -- the only
+    # thing that identifies it -- disappears into a blob.
+    if r < 5.0:
+        return
     n = int(6 + 8 * g.ornament)
     for i in range(1, n):
         t = -1.0 + 2.0 * i / n
@@ -992,6 +1110,323 @@ def draw_tintinnid(c, cx, cy, r, ang, g):
         c.line(*(tw(u, t * rim) + tw(u - r * 0.55, t * rim * 1.3)))
 
 
+# --------------------------------------------------------------------------
+# The eleven added in Stage 5.
+#
+# One rule governs all of them, and it comes out of the measurement in the
+# plan: at r = 3 an organism is about seven pixels across, and the only kind
+# of feature that survives at seven pixels is an OUTLINE. Anything whose
+# identity lives in interior detail becomes a blob. So each of these is
+# designed around a silhouette -- a scalloped rim, a straight rod through a
+# centre, a row of hoops, a needle -- and the interior detail is what appears
+# as it grows, not what it depends on.
+# --------------------------------------------------------------------------
+
+
+def draw_coccolithophore(c, cx, cy, r, ang, g):
+    """Emiliania. A sphere plated with overlapping oval coccoliths.
+
+    The tell is the EDGE, not the plates: a coccosphere's outline is broken
+    into shallow scallops where the rims of the plates stand proud. That
+    survives to r = 3, where the scallops are one-pixel notches and it still
+    is not a circle -- which is the whole reason this is the small organism
+    the roster needed."""
+    # Fewer, deeper scallops when small. At r = 3 a circumference of about
+    # nineteen pixels cannot carry fourteen notches -- they alias into a
+    # smooth circle, which is the one thing this must not look like.
+    n = (7 if r < 5.0 else 10 + int(4 * g.ornament))
+    amp = 0.24 if r < 5.0 else 0.14
+    pts = []
+    steps = max(14, int(r * 3))
+    for i in range(steps):
+        a = ang + 2 * math.pi * i / steps
+        rr = r * (1.0 + amp * math.cos(n * (a - ang)))
+        pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
+    c.polyline(pts, close=True)
+    if r >= 5.5:
+        # a few plates seen face-on across the near hemisphere
+        for k in range(3):
+            a = ang + 2.4 * k + g.curl
+            px = cx + r * 0.42 * math.cos(a)
+            py = cy + r * 0.42 * math.sin(a)
+            c.ellipse(px, py, r * 0.34, r * 0.22, a + 1.2)
+
+
+def draw_flagellate(c, cx, cy, r, ang, g):
+    """A small naked flagellate -- cryptophyte, Micromonas, the nanoplankton
+    that has no defence and no ornament and is eaten by everything.
+
+    At r = 3 this is a dot with two hairs. Two hairs is enough: it says alive
+    rather than detritus, which is the only distinction that matters at this
+    size and the reason marine snow cannot be mistaken for it."""
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    # Fatter than a diatom and blunter than a dinoflagellate: at r = 3 the
+    # body has to read as a bulb, or two trailing flagella make it look like
+    # a small Ceratium, which is a different organism in a different ocean.
+    w = r * 0.78
+    pts = []
+    for i in range(13):
+        t = -1.0 + 2.0 * i / 12
+        # teardrop: blunt at the front, drawn out aft
+        v = w * (1.0 - t) ** 0.55 * (1.0 + t) ** 0.85 * 0.78
+        pts.append(tw(t * r, -v))
+    for i in range(12, -1, -1):
+        t = -1.0 + 2.0 * i / 12
+        v = w * (1.0 - t) ** 0.55 * (1.0 + t) ** 0.85 * 0.78
+        pts.append(tw(t * r, v))
+    c.polyline(pts, close=True)
+    # The two flagella have to diverge, or at small r they land on the same
+    # pixels and it reads as one tail -- which is a different organism.
+    for sgn in (-1, 1):
+        f = []
+        for k in range(5):
+            t = k / 4.0
+            u = r * (1.0 + 1.05 * t)
+            v = sgn * (w * 0.35 + r * 0.75 * t * t) + sgn * 0.22 * r * math.sin(g.curl * 4)
+            f.append(tw(u, v))
+        c.polyline(f)
+
+
+def draw_thalassiosira(c, cx, cy, r, ang, g):
+    """Small centrics strung on a single central thread.
+
+    The thread is the tell, not the cell. A dotted line of discs reads at any
+    size, which is why this works small where a lone small centric would just
+    be a ring."""
+    n = 3 + int(g.ornament * 3)
+    ca = math.cos(ang); sa = math.sin(ang)
+    gap = r * 2.6
+    u0 = -gap * (n - 1) * 0.5
+    prev = None
+    for i in range(n):
+        u = u0 + i * gap
+        px = cx + u * ca
+        py = cy + u * sa
+        c.circle(px, py, r)
+        if r >= 4.0:
+            c.px(int(px), int(py))
+        if prev is not None:
+            c.line(prev[0], prev[1], px, py)
+        prev = (px, py)
+
+
+def draw_rhizosolenia(c, cx, cy, r, ang, g):
+    """A needle. Aspect twelve to one, which makes it the most elongated
+    thing in the set and therefore unmistakable at any size -- there is
+    nothing else it could be confused with, because nothing else is a line."""
+    L = r * 3.4
+    w = r * 0.30
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    top = []; bot = []
+    for i in range(11):
+        t = -1.0 + 2.0 * i / 10
+        v = w * (1.0 - t * t) ** 0.30
+        top.append(tw(t * L, -v))
+        bot.append(tw(t * L, v))
+    c.polyline(top)
+    c.polyline(bot)
+    for sgn in (-1, 1):
+        a = tw(sgn * L, 0)
+        b = tw(sgn * L * 1.30, sgn * w * 0.5 * g.curl)
+        c.line(a[0], a[1], b[0], b[1])
+    if r >= 5.0:
+        n = 3 + int(3 * g.ornament)
+        for i in range(1, n):
+            t = -1.0 + 2.0 * i / n
+            p = tw(t * L, -w * 0.9)
+            q = tw(t * L, w * 0.9)
+            c.line(p[0], p[1], q[0], q[1])
+
+
+def draw_corethron(c, cx, cy, r, ang, g):
+    """Two spiky pom-poms joined by a stub. A stubby barrel with a coronet of
+    long spines from each end face -- a Southern Ocean diatom, and one of the
+    few things in the set whose silhouette is symmetric about both axes."""
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    hl = r * 0.75
+    hw = r * 0.62
+    c.polyline([tw(-hl, -hw), tw(hl, -hw), tw(hl, hw), tw(-hl, hw)], close=True)
+    n = 5 + int(4 * g.ornament)
+    for sgn in (-1, 1):
+        for i in range(n):
+            f = -1.0 + 2.0 * i / (n - 1)
+            a = tw(sgn * hl, f * hw)
+            b = tw(sgn * (hl + r * 1.9), f * hw * 1.9 + sgn * r * 0.3 * g.curl)
+            c.line(a[0], a[1], b[0], b[1])
+
+
+def draw_acantharia(c, cx, cy, r, ang, g):
+    """Twenty spicules, arranged as ten rods passing through one centre.
+
+    That is Muller's law and it is exactly what makes this readable: the
+    spicules are perfectly straight and they all meet, so at r = 3 it is a
+    star of clean lines rather than the fuzz a radiolarian becomes. The body
+    is deliberately small -- a quarter of the diameter -- because the
+    body-to-spike ratio is the only thing separating it from everything else
+    that is spiky."""
+    body = r * 0.26
+    if r >= 4.5:
+        c.circle(cx, cy, body)
+    else:
+        c.px(int(cx), int(cy))
+    # Ten rods is Muller's law and it is right at full size. At r = 3 twenty
+    # spicule tips fall on a circumference of nineteen pixels and the star
+    # fills in solid, so the count drops and the shape survives instead.
+    n = 10 if r >= 6.0 else (7 if r >= 4.0 else 5)
+    for i in range(n):
+        a = ang + math.pi * i / n
+        ca = math.cos(a); sa = math.sin(a)
+        c.line(cx - r * ca, cy - r * sa, cx + r * ca, cy + r * sa)
+
+
+def draw_foraminiferan(c, cx, cy, r, ang, g):
+    """Globigerina. Four or five chambers in a spiral, each about a third
+    larger than the last and overlapping it by half -- a lobed cluster of
+    grapes, which is a silhouette nothing else in the set produces."""
+    n = 4 if r >= 5.0 else 3
+    rr = r * 0.46
+    a = ang
+    px, py = cx - r * 0.3, cy - r * 0.2
+    for i in range(n):
+        c.circle(px, py, rr)
+        a += 1.55
+        step = rr * 1.15
+        px += step * math.cos(a)
+        py += step * math.sin(a)
+        rr *= 1.30
+    if r >= 8.0:
+        # the spinose kind: a few long radial spines from the last chamber
+        for k in range(5):
+            b = ang + 0.7 + k * 1.15
+            cb, sb = math.cos(b), math.sin(b)
+            c.line(px + rr * 0.9 * cb, py + rr * 0.9 * sb,
+                   px + rr * 1.9 * cb, py + rr * 1.9 * sb)
+
+
+def draw_ornithocercus(c, cx, cy, r, ang, g):
+    """A small body engulfed by two enormous fenestrated sails. The most
+    ornate and most asymmetric outline available, and a warm-gyre organism --
+    which is the point, since the gyres are where the roster needed
+    something worth looking at."""
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    b = r * 0.32
+    if r >= 4.5:
+        c.ellipse(cx, cy, b * 1.15, b, ang)
+    else:
+        c.px(int(cx), int(cy))
+    for sgn in (-1, 1):
+        rim = []
+        ribs = (2 if r < 5.0 else 4 + int(4 * g.ornament))
+        for i in range(ribs + 1):
+            t = -1.0 + 2.0 * i / ribs
+            u = t * r * 1.05
+            v = sgn * (b + r * 0.95 * (1.0 - t * t) ** 0.55)
+            rim.append(tw(u, v))
+            base = tw(u * 0.42, sgn * b * 0.85)
+            c.line(base[0], base[1], rim[-1][0], rim[-1][1])
+        c.polyline(rim)
+    tip = tw(-r * 1.25, r * 0.10 * g.curl)
+    apex = tw(-b * 1.1, 0)
+    c.line(apex[0], apex[1], tip[0], tip[1])
+
+
+def draw_trichodesmium(c, cx, cy, r, ang, g):
+    """A tuft of parallel filaments with frayed ends -- the nitrogen fixer,
+    and the reason the subtropical gyres are habitable at all.
+
+    Drawn as a bundle rather than a cell because that is what you see: a
+    raft of trichomes, which at sea is visible from the deck as 'sea
+    sawdust'."""
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    # Filament count follows the width available. At r = 3 the bundle is four
+    # pixels across and eleven filaments is a solid black bar.
+    n = (3 if r < 4.0 else (5 if r < 6.5 else 6 + int(5 * g.ornament)))
+    L = r * 2.6
+    for i in range(n):
+        f = -1.0 + 2.0 * i / (n - 1)
+        v = f * r * 0.72
+        wob = 0.20 * r * math.sin(f * 5.0 + g.curl * 4.0)
+        pts = []
+        for k in range(5):
+            t = -1.0 + 2.0 * k / 4
+            spread = 1.0 + 0.35 * t * t          # frayed at the ends
+            pts.append(tw(t * L, v * spread + wob * (1.0 - t * t)))
+        c.polyline(pts)
+
+
+def draw_salp(c, cx, cy, r, ang, g):
+    """A chain of hooped barrels. The most distinctive silhouette on the
+    whole list -- nothing else looks remotely like it, at any size."""
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    n = 3 + int(g.ornament * 3)
+    ul = r * 1.05
+    hw = r * 0.52
+    u0 = -(n - 1) * ul
+    for i in range(n):
+        u = u0 + i * 2 * ul
+        c.polyline([tw(u - ul * 0.86, -hw), tw(u + ul * 0.86, -hw)])
+        c.polyline([tw(u - ul * 0.86, hw), tw(u + ul * 0.86, hw)])
+        hoops = 3 + int(3 * g.ornament)
+        for k in range(hoops):
+            t = -0.80 + 1.60 * k / max(1, hoops - 1)
+            p = tw(u + t * ul, -hw)
+            q = tw(u + t * ul, hw)
+            c.line(p[0], p[1], q[0], q[1])
+        e = tw(u + ul * 0.30, hw * 0.35)
+        c.px(int(e[0]), int(e[1]))
+
+
+def draw_krill(c, cx, cy, r, ang, g):
+    """Segmented rod plus a tail fan, against the copepod's teardrop plus whip
+    antennae. Those two silhouettes are the reason both can be in the set."""
+    ca = math.cos(ang); sa = math.sin(ang)
+
+    def tw(u, v):
+        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
+
+    hw = r * 0.34
+    L = r * 1.35
+    c.polyline([tw(-L, -hw * 0.8), tw(-L * 0.35, -hw),
+                tw(L * 0.55, -hw * 0.55), tw(L * 0.55, hw * 0.55),
+                tw(-L * 0.35, hw), tw(-L, hw * 0.8)], close=True)
+    for k in range(1, 6):
+        u = -L * 0.35 + (L * 0.90) * k / 6.0
+        c.line(*(tw(u, -hw * 0.9) + tw(u, hw * 0.9)))
+    for sgn in (-1, 1):                        # tail fan
+        a = tw(L * 0.55, sgn * hw * 0.5)
+        b = tw(L * 1.25, sgn * hw * 1.7)
+        d = tw(L * 1.15, 0)
+        c.polyline([a, b, d])
+    for sgn in (-1, 1):                        # stalked eyes and antennae
+        e = tw(-L * 1.05, sgn * hw * 0.55)
+        c.px(int(e[0]), int(e[1]))
+        c.line(*(tw(-L, sgn * hw * 0.4) + tw(-L * 1.7, sgn * hw * 1.0)))
+
+
 DRAW = {
     RADIOLARIAN: draw_radiolarian,
     CENTRIC: draw_centric,
@@ -999,6 +1434,17 @@ DRAW = {
     CHAIN: draw_chain,
     CERATIUM: draw_ceratium,
     TINTINNID: draw_tintinnid,
+    COCCO: draw_coccolithophore,
+    FLAGELLATE: draw_flagellate,
+    THALASSIO: draw_thalassiosira,
+    RHIZO: draw_rhizosolenia,
+    CORETHRON: draw_corethron,
+    ACANTHARIA: draw_acantharia,
+    FORAM: draw_foraminiferan,
+    ORNITHO: draw_ornithocercus,
+    TRICHO: draw_trichodesmium,
+    SALP: draw_salp,
+    KRILL: draw_krill,
 }
 
 
@@ -1137,6 +1583,23 @@ class Ecosystem:
                       0.35)          # a daughter is already a real cell
         self.agents.append(a)
         return a
+
+    def _seed_het(self):
+        """Which grazer arrives. Same absence-weighting as the drifters: a
+        krill that loses in the tropics has to still be available when the
+        ship reaches the Southern Ocean eighteen months later."""
+        r = self.rng
+        present = {}
+        for a in self.agents:
+            if not a.doomed:
+                present[a.g.kind] = present.get(a.g.kind, 0) + 1
+        w = [1.0 / (1.0 + 2.0 * present.get(k, 0)) for k in HET_KINDS]
+        pick = r.random() * sum(w)
+        for k, wt in zip(HET_KINDS, w):
+            pick -= wt
+            if pick <= 0.0:
+                return k
+        return HET_KINDS[0]
 
     def _spawn_het(self, kind):
         r = self.rng
@@ -1336,8 +1799,6 @@ class Ecosystem:
         hets = [a for a in self.agents
                 if a.g.kind in HET_KINDS and not a.doomed]
         n_drift = len(drifters)
-        n_cope = sum(1 for h in hets if h.g.kind == COPEPOD)
-        n_tint = len(hets) - n_cope
         born = []
 
         # ---- advection and fade, common to everything --------------------
@@ -1372,7 +1833,15 @@ class Ecosystem:
             # Iron half-saturation scales with size the same way nitrogen does
             # (Sunda & Huntsman 1997), so a big cell is iron-limited first.
             f_fe = self._iron / (self._iron + 0.12 * d[1])
-            f_nut = min(1.0, f_nh4 + f_no3, f_fe)
+            if a.g.kind in DIAZOTROPHS:
+                # fixes its own nitrogen, so the N terms simply do not apply.
+                # What binds instead is iron, at twenty-five times the demand,
+                # and a hard temperature floor.
+                T = env.temperature(t, a.z)
+                f_fe = self._iron / (self._iron + 0.12 * d[1] * DIAZO_FE_COST)
+                f_nut = f_fe if T >= DIAZO_T_MIN else 0.0
+            else:
+                f_nut = min(1.0, f_nh4 + f_no3, f_fe)
             f_temp = temp_factor(a.g.kind, env.temperature(t, a.z))
             # a.g.jitter is the lognormal spread on growth rate. It is not
             # cosmetic: it is what lets a subset of individuals land on an
@@ -1423,20 +1892,30 @@ class Ecosystem:
 
         # ---- heterotrophs -------------------------------------------------
         for a in hets:
-            if a.g.kind == COPEPOD:
+            k = a.g.kind
+            if k in MIGRATORS:
                 # diel vertical migration, with individual variation so they
-                # do not sweep up and down as one rigid block
+                # do not sweep up and down as one rigid block. Copepods and
+                # krill both do it; ciliates and salps do not.
                 target = 7.0 + 14.0 * a.g.curl + 34.0 * daylight
                 a.z += (target - a.z) * min(1.0, 2.2 * dt)
-                a.mass += self._ingest(a, dt) * 1.4
-                a.mass -= 0.20 * dt
-                cap_ok = n_cope + sum(1 for b in born if b.g.kind == COPEPOD) < MAX_ZOO
             else:
                 target = 9.0 + 24.0 * (0.5 + 0.5 * a.g.curl)
                 a.z += (target - a.z) * min(1.0, 0.5 * dt)
-                a.mass += self._ingest(a, dt) * 1.1
-                a.mass -= 0.16 * dt
-                cap_ok = n_tint + sum(1 for b in born if b.g.kind == TINTINNID) < 4
+            a.mass += self._ingest(a, dt) * HET_ASSIM[k]
+            # maintenance is allometric here too: a salp costs little to run
+            a.mass -= DERIVED[k][7] * 3.2 * dt
+            # A grazer that cannot divide because its class is full used to
+            # keep eating and keep growing, with nothing bounding it -- the
+            # drifters had min(2.45, ...) and the heterotrophs had nothing.
+            # Krill reached a mass of 59 and the grazers ended up outweighing
+            # everything they were eating, which is not a food chain, it is a
+            # pyramid standing on its point.
+            a.mass = min(2.6, a.mass)
+            nk = sum(1 for h in hets if h.g.kind == k and not h.doomed)
+            n_all = sum(1 for h in hets if not h.doomed) + len(born)
+            cap_ok = (nk + sum(1 for b in born if b.g.kind == k)
+                      < HET_CAP.get(k, 2)) and n_all < MAX_ZOO
             a.spin += rng.gauss(0, 2.5) * dt
             a.spin *= math.exp(-4.0 * dt)          # dt-consistent damping
             a.ang += a.spin * dt
@@ -1481,10 +1960,9 @@ class Ecosystem:
         if rng.random() < rate * dt:
             self._spawn_drifter().mass = rng.uniform(0.30, 0.55)
         self._enforce_cap()
-        if sum(1 for a in self.agents if a.g.kind == COPEPOD) < 1 and rng.random() < 0.8 * dt:
-            self._spawn_het(COPEPOD)
-        if sum(1 for a in self.agents if a.g.kind == TINTINNID) < 1 and rng.random() < 0.6 * dt:
-            self._spawn_het(TINTINNID)
+        if sum(1 for a in self.agents if a.g.kind in HET_KINDS) < MAX_ZOO:
+            if rng.random() < 1.2 * dt:
+                self._spawn_het(self._seed_het())
 
         # ---- marine snow ---------------------------------------------------
         zpx = (H - TOP_M - BOT_M) / Z_MAX
@@ -1945,7 +2423,7 @@ def preview():
     pygame.quit()
 
 
-def voyage_sweep(outdir, every=30, seed=7):
+def voyage_sweep(outdir, every=30, seed=7, log_every=10):
     """Run the whole circumnavigation headless and lay it out as a contact
     sheet, one panel per `every` days.
 
@@ -1970,13 +2448,20 @@ def voyage_sweep(outdir, every=30, seed=7):
     view = View(hud=False)
     total = track.days[-1]
 
+    # The contact sheet wants a panel a month; the statistics want three
+    # times that. A regional window three panels wide is noise -- the gyre
+    # test swung between 5% and 57% across seeds on that sample -- so the log
+    # is sampled finer than the sheet.
     tiles, log = [], []
-    nxt = 0.0
+    nxt, nxt_log = 0.0, 0.0
     while eco.t < total:
         eco.step(1.0 / 12.0)
         if eco.t >= nxt:
             render(eco, canvas, view, track, eco.t)
             tiles.append(to_pil(canvas))
+            nxt += every
+        if eco.t >= nxt_log:
+            nxt_log += log_every
             la, lo = track.position(eco.t)
             comp = eco.composition()
             log.append((int(eco.t), la, lo, eco.env.temperature(eco.t, 2.0),
@@ -1985,7 +2470,6 @@ def voyage_sweep(outdir, every=30, seed=7):
                         eco.biomass, len(eco.agents), eco.n_zoo)
                        + tuple(comp.get(k, 0.0) for k in DRIFTER_KINDS)
                        + (track.status(eco.t),))
-            nxt += every
 
     cols = 9
     rows = (len(tiles) + cols - 1) // cols
