@@ -20,13 +20,16 @@ Run:
     python3 drift.py
 
 Keys:
-    space   pause
-    1 2 3 4 speed: real-time / 1 min per hour / 1 sec per hour / 1 sec per day
-    h       toggle HUD
-    p       toggle plate furniture (border, depth scale, caption)
-    s       save a PNG
-    r       reseed the world
-    esc     quit
+    space       pause
+    wheel       speed, continuously (shift+wheel for coarse jumps)
+    1 2 3 4 5   speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per sec
+    c           CLEAN MODE -- organisms and snow only, all chrome hidden
+    h           toggle HUD
+    p           toggle plate furniture (border, depth scale, caption)
+    n           toggle the chemoautotroph stipple
+    s           save a PNG
+    r           reseed the world
+    esc         quit
 
 Headless (writes stills, no pygame needed):
     python3 drift.py --stills out/
@@ -1039,6 +1042,39 @@ def date_label(t_days):
     return "%02d %s" % (d, MONTHS[m])
 
 
+class View:
+    """What chrome is drawn, and nothing about the simulation.
+
+    Clean mode is not a separate render path -- it is simply every piece of
+    furniture switched off, leaving organisms, detritus and marine snow on
+    bare paper. On the hardware this whole object collapses to two bits in a
+    config byte and `toggle_clean` becomes the KEY button."""
+
+    __slots__ = ("plate", "hud", "chemo", "snow", "_saved")
+
+    def __init__(self, plate=True, hud=True, chemo=True, snow=True):
+        self.plate = plate
+        self.hud = hud
+        self.chemo = chemo
+        self.snow = snow
+        self._saved = None
+
+    @property
+    def clean(self):
+        return not (self.plate or self.hud)
+
+    def toggle_clean(self):
+        """Remembers what was on, so leaving clean mode restores the exact
+        view you had rather than a default."""
+        if self.clean:
+            self.plate, self.hud = self._saved or (True, True)
+            self._saved = None
+        else:
+            self._saved = (self.plate, self.hud)
+            self.plate = False
+            self.hud = False
+
+
 _STIPPLE = None
 
 
@@ -1053,22 +1089,27 @@ def _stipple_points():
     return _STIPPLE
 
 
-def render(eco, canvas, plate=True):
+DEFAULT_VIEW = View()
+
+
+def render(eco, canvas, view=DEFAULT_VIEW):
     canvas.clear()
     zpx = (H - TOP_M - BOT_M) / Z_MAX
 
     # chemoautotrophs: too small and too numerous to be agents, so they are
     # drawn as a stipple whose density follows the nitrifier population.
     # They fill the deep water that used to be dead space.
-    for (x, y, rank) in _stipple_points():
-        i = min(NBINS - 1, max(0, int(((y - TOP_M) / zpx) / BIN_M)))
-        if rank < eco.nit[i] * 0.40:
-            canvas.px(x, y)
+    if view.chemo:
+        for (x, y, rank) in _stipple_points():
+            i = min(NBINS - 1, max(0, int(((y - TOP_M) / zpx) / BIN_M)))
+            if rank < eco.nit[i] * 0.40:
+                canvas.px(x, y)
 
-    for s in eco.snow:
-        canvas.px(int(s[0]), int(s[1]))
-        if s[3]:
-            canvas.px(int(s[0]) + 1, int(s[1]))
+    if view.snow:
+        for s in eco.snow:
+            canvas.px(int(s[0]), int(s[1]))
+            if s[3]:
+                canvas.px(int(s[0]) + 1, int(s[1]))
 
     for d in eco.det:
         y = depth_to_y(d.z)
@@ -1095,8 +1136,10 @@ def render(eco, canvas, plate=True):
             if a.flash > 0.25:
                 canvas.circle(xx, y, r * 1.9)
 
-    if plate:
+    if view.plate:
         draw_plate(eco, canvas)
+    if view.hud:
+        draw_hud(eco, canvas)
 
 
 def draw_plate(eco, c):
@@ -1150,13 +1193,58 @@ def draw_hud(eco, c):
 # 7. PREVIEW
 # --------------------------------------------------------------------------
 
-SPEEDS = [
-    ("REAL TIME", 1.0 / 86400.0),      # 1 sim second per real second
-    ("1 MIN/SEC", 1.0 / 1440.0),       # a day in 24 real minutes
-    ("1 HOUR/SEC", 1.0 / 24.0),        # a day in 24 real seconds
-    ("6 HOUR/SEC", 0.25),              # a year in 24 real minutes
-    ("1 DAY/SEC", 1.0),                # a year in 6 real minutes
-]
+# Speed is one number: simulated days elapsed per real second. Everything
+# else -- presets, the wheel, the readout -- is a view onto it.
+SPEED_MIN = 1.0 / 86400.0          # real time: 1 sim second per real second
+SPEED_MAX = 8.0                    # a year in 46 real seconds
+SPEED_STEP = 2.0 ** 0.25           # one wheel notch: 4 notches per doubling
+SPEED_COARSE = 2.0                 # shift+wheel: one notch per doubling
+
+# Keys 1-5. Landmarks on a continuum, not the only available speeds.
+PRESETS = (
+    1.0 / 86400.0,                 # real time
+    1.0 / 1440.0,                  # 1 min per sec
+    1.0 / 24.0,                    # 1 hour per sec
+    0.25,                          # 6 hours per sec
+    1.0,                           # 1 day per sec
+)
+# Snap radius is half a notch, in log space. That is the principled value:
+# if a preset is nearer than the next detent, the wheel lands on the preset.
+# Anything smaller and presets fall between notches and become unreachable
+# by scrolling; anything larger and the wheel sticks to them.
+SNAP_TOL = 0.5 * math.log(SPEED_STEP)
+
+
+def clamp_speed(v):
+    return max(SPEED_MIN, min(SPEED_MAX, v))
+
+
+def snap_speed(v):
+    """So that scrolling past a preset lands exactly on it, and the readout
+    says '1 HR/SEC' rather than '1.1 HR/SEC'."""
+    for p in PRESETS:
+        if abs(math.log(v / p)) < SNAP_TOL:
+            return p
+    return v
+
+
+def speed_label(dps):
+    """dps is simulated days per real second. Report it in whatever unit
+    keeps the number small, because that is how you actually think about it."""
+    s = dps * 86400.0                       # simulated seconds per real second
+    if s < 59.5:
+        v, u = s, "SEC"
+    elif s < 3570.0:
+        v, u = s / 60.0, "MIN"
+    elif s < 85000.0:
+        v, u = s / 3600.0, "HR"
+    else:
+        v, u = s / 86400.0, "DAY"
+    if v < 9.95:
+        n = ("%.1f" % v).rstrip("0").rstrip(".")
+    else:
+        n = "%d" % int(round(v))
+    return "%s %s/SEC" % (n, u)
 
 
 def to_pil(canvas):
@@ -1175,13 +1263,14 @@ def stills(outdir):
     os.makedirs(outdir, exist_ok=True)
     eco = Ecosystem(seed=7, start_day=1.0)
     canvas = Canvas(W, H)
+    view = View(hud=False)
     targets = [30, 105, 135, 175, 240, 320]
     saved = []
     i = 0
     while eco.t < 340 and i < len(targets):
         eco.step(1.0 / 24.0)
         if eco.t >= targets[i]:
-            render(eco, canvas, plate=True)
+            render(eco, canvas, view)
             path = os.path.join(outdir, "drift_%03d.png" % targets[i])
             to_pil(canvas).resize((W * 2, H * 2), 0).save(path)
             saved.append((path, date_label(eco.t), eco.biomass,
@@ -1208,31 +1297,42 @@ def preview():
 
     eco = Ecosystem(seed=None, start_day=40.0)
     canvas = Canvas(W, H)
-    speed = 2
+    view = View()
+    speed = PRESETS[2]          # 1 hour per second
     paused = False
-    hud = True
-    plate = True
+    toast = 0.0                 # seconds left on the transient speed readout
     shot = 0
 
     surf = pygame.Surface((W, H))
     running = True
     while running:
         real_dt = clock.tick(20) / 1000.0
+        wheel = 0
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 running = False
+            elif e.type == pygame.MOUSEWHEEL:
+                wheel += e.y
+            elif e.type == pygame.MOUSEBUTTONDOWN and e.button in (4, 5):
+                wheel += 1 if e.button == 4 else -1     # older SDL fallback
             elif e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_ESCAPE:
                     running = False
                 elif e.key == pygame.K_SPACE:
                     paused = not paused
+                    toast = 1.4
                 elif e.key in (pygame.K_1, pygame.K_2, pygame.K_3,
                                pygame.K_4, pygame.K_5):
-                    speed = e.key - pygame.K_1
+                    speed = PRESETS[e.key - pygame.K_1]
+                    toast = 1.4
+                elif e.key == pygame.K_c:
+                    view.toggle_clean()
                 elif e.key == pygame.K_h:
-                    hud = not hud
+                    view.hud = not view.hud
                 elif e.key == pygame.K_p:
-                    plate = not plate
+                    view.plate = not view.plate
+                elif e.key == pygame.K_n:
+                    view.chemo = not view.chemo
                 elif e.key == pygame.K_r:
                     eco = Ecosystem(seed=None, start_day=eco.t)
                 elif e.key == pygame.K_s:
@@ -1241,17 +1341,29 @@ def preview():
                     print("saved drift_%03d.png" % shot)
                     shot += 1
 
+        if wheel:
+            mods = pygame.key.get_mods()
+            step = SPEED_COARSE if (mods & pygame.KMOD_SHIFT) else SPEED_STEP
+            speed = clamp_speed(snap_speed(speed * step ** wheel))
+            toast = 1.4
+
         if not paused:
-            dt = real_dt * SPEEDS[speed][1]
+            dt = real_dt * speed
             # sub-step so fast-forward stays numerically sane
-            steps = max(1, min(40, int(dt / 0.02) + 1))
+            steps = max(1, min(64, int(dt / 0.015) + 1))
             for _ in range(steps):
                 eco.step(dt / steps)
 
-        render(eco, canvas, plate=plate)
-        if hud:
-            draw_hud(eco, canvas)
-            text(canvas, 12, H - 30, SPEEDS[speed][0] + ("  PAUSED" if paused else ""))
+        toast = max(0.0, toast - real_dt)
+
+        render(eco, canvas, view)
+        status = speed_label(speed) + ("  PAUSED" if paused else "")
+        if view.hud:
+            text(canvas, 12, H - 30, status)
+        elif toast > 0.0:
+            # clean mode keeps its own counsel, except for a moment after you
+            # touch the wheel
+            text(canvas, 8, H - 10, status)
 
         # blit the 1-bit buffer via numpy -- a per-pixel Python loop here
         # costs ~96k operations a frame and stutters badly
