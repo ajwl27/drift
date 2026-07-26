@@ -190,7 +190,7 @@ def draw_progress(c, track, day, y0=12):
     ns = "N" if la >= 0 else "S"
     ew = "E" if lo >= 0 else "W"
 
-    text(c, 10, y0, "DRAKE  1577-1580")
+    text(c, 10, y0, track.voyage.subtitle[:38])
     text(c, 10, y0 + 9, "%02d%s%02d'%s   %03d%s%02d'%s"
          % (abs(int(la)), "\xb0", int(abs(la) % 1 * 60), ns,
             abs(int(lo)), "\xb0", int(abs(lo) % 1 * 60), ew))

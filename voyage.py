@@ -30,6 +30,39 @@ import math
 # 1. THE TRACK
 # --------------------------------------------------------------------------
 
+class Voyage:
+    """One historical track, everything the piece needs to sail it.
+
+    The point of this class is the gift box. Making three or four of these
+    objects and giving them away means each one wants a different voyage --
+    Drake for one person, the Beagle for another, Cook for whoever likes
+    Australia -- and the difference between them should be a table, not a
+    fork. So the track is data, the ecosystem never learns which voyage it is
+    on, and adding one is: write the waypoints, write the notes, register it.
+
+    On the hardware this is a build-time constant: one voyage compiled in,
+    the rest costing nothing. The card that goes in the box is printed from
+    `notes`."""
+
+    __slots__ = ("key", "title", "subtitle", "departure", "waypoints", "notes")
+
+    def __init__(self, key, title, subtitle, departure, waypoints, notes=""):
+        self.key = key
+        self.title = title
+        self.subtitle = subtitle
+        self.departure = departure
+        self.waypoints = waypoints
+        self.notes = notes
+
+    @property
+    def days(self):
+        return self.waypoints[-1][0]
+
+    def __repr__(self):
+        return "<Voyage %s, %d days, %d waypoints>" % (
+            self.key, self.days, len(self.waypoints))
+
+
 DEPARTURE = "13 DEC 1577"
 VOYAGE_DAYS = 1018
 
@@ -38,7 +71,7 @@ VOYAGE_DAYS = 1018
 # Repeated positions on different days are deliberate: they are the
 # careening stops and the winter at Port St Julian, and they are why the
 # piece sits in one water mass for weeks at a time.
-WAYPOINTS = (
+DRAKE_WAYPOINTS = (
     (   0,  50.37,   -4.14, 2, "PLYMOUTH"),
     (  12,  31.51,   -9.77, 2, "MOGADOR"),
     (  34,  20.77,  -17.03, 2, "CAPE BLANCO"),
@@ -133,6 +166,121 @@ look emptiest -- and correctly so.
 """
 
 
+# --------------------------------------------------------------------------
+# A second voyage, which is the whole point of the Voyage class.
+#
+# The Beagle is the obvious companion piece: Darwin spent a great deal of the
+# five years towing a plankton net off the stern and writing about what came
+# up in it, so of every voyage that could go in this frame it is the one
+# where the plankton are not a conceit. It also crosses water Drake never
+# saw -- the Galapagos, Tahiti, New Zealand, the Australian bight, Keeling
+# -- so the two objects sitting side by side would show visibly different
+# oceans rather than the same one twice.
+#
+# Dates are Gregorian throughout and the arithmetic is ordinary.
+BEAGLE_WAYPOINTS = (
+    (   0,  50.37,   -4.14, 2, "PLYMOUTH"),          # 27 Dec 1831
+    (  10,  28.47,  -16.25, 2, "TENERIFE"),
+    (  20,  14.92,  -23.51, 2, "SANTIAGO"),
+    (  43,  14.92,  -23.51, 2, "SANTIAGO"),          # 23 days ashore
+    (  51,   0.92,  -29.35, 2, "ST PAUL ROCKS"),     # 16 Feb 1832
+    (  55,  -3.85,  -32.42, 2, "FERNANDO DE NORONHA"),
+    (  63, -12.97,  -38.50, 2, "BAHIA"),             # 28 Feb 1832
+    (  81, -12.97,  -38.50, 2, "BAHIA"),
+    ( 100, -22.91,  -43.17, 2, "RIO DE JANEIRO"),
+    ( 191, -22.91,  -43.17, 2, "RIO DE JANEIRO"),    # 91 days, Darwin ashore
+    ( 202, -34.90,  -56.19, 2, "MONTEVIDEO"),
+    ( 250, -34.90,  -56.19, 2, "MONTEVIDEO"),
+    ( 287, -38.72,  -62.27, 2, "BAHIA BLANCA"),
+    ( 340, -38.72,  -62.27, 2, "BAHIA BLANCA"),
+    ( 390, -34.90,  -56.19, 2, "MONTEVIDEO"),
+    ( 480, -34.90,  -56.19, 2, "MONTEVIDEO"),
+    ( 512, -47.75,  -65.90, 2, "PUERTO DESEADO"),
+    ( 536, -49.31,  -67.72, 2, "PORT ST JULIAN"),
+    ( 560, -51.62,  -69.22, 2, "STRAIT OF MAGELLAN"),
+    ( 590, -51.70,  -57.85, 2, "FALKLAND ISLANDS"),
+    ( 620, -51.70,  -57.85, 2, "FALKLAND ISLANDS"),
+    ( 700, -34.90,  -56.19, 2, "MONTEVIDEO"),
+    ( 760, -54.85,  -68.30, 2, "TIERRA DEL FUEGO"),
+    ( 800, -55.98,  -67.27, 2, "CAPE HORN"),
+    ( 840, -54.93,  -67.61, 2, "BEAGLE CHANNEL"),
+    ( 900, -51.70,  -57.85, 2, "FALKLAND ISLANDS"),
+    ( 960, -50.10,  -68.50, 2, "SANTA CRUZ RIVER"),
+    (1010, -53.15,  -70.92, 2, "PORT FAMINE"),
+    (1050, -49.00,  -74.40, 2, "CHONOS ARCHIPELAGO"),
+    (1080, -41.87,  -73.82, 2, "CHILOE"),
+    (1140, -39.82,  -73.24, 2, "VALDIVIA"),          # the 1835 earthquake
+    (1160, -36.72,  -73.12, 2, "CONCEPCION"),
+    (1180, -33.03,  -71.62, 2, "VALPARAISO"),
+    (1240, -33.03,  -71.62, 2, "VALPARAISO"),
+    (1280, -20.21,  -70.15, 2, "IQUIQUE"),
+    (1300, -12.05,  -77.15, 2, "CALLAO"),
+    (1345, -12.05,  -77.15, 2, "CALLAO"),
+    (1360,  -0.75,  -90.32, 2, "GALAPAGOS"),         # 15 Sep 1835
+    (1395,  -0.28,  -91.60, 2, "GALAPAGOS"),
+    (1420, -12.50, -125.00, 0, "PACIFIC"),           # reconstructed
+    (1420, -12.50, -125.00, 0, "PACIFIC"),
+    (1450, -17.53, -149.57, 2, "TAHITI"),
+    (1462, -17.53, -149.57, 2, "TAHITI"),
+    (1490, -35.28,  174.08, 2, "BAY OF ISLANDS"),
+    (1500, -35.28,  174.08, 2, "BAY OF ISLANDS"),
+    (1515, -33.86,  151.21, 2, "SYDNEY"),
+    (1533, -33.86,  151.21, 2, "SYDNEY"),
+    (1545, -42.88,  147.33, 2, "HOBART"),
+    (1557, -42.88,  147.33, 2, "HOBART"),
+    (1580, -32.05,  115.74, 2, "KING GEORGE SOUND"),
+    (1588, -32.05,  115.74, 2, "KING GEORGE SOUND"),
+    (1620, -12.13,   96.89, 2, "KEELING ISLANDS"),   # the coral atoll
+    (1632, -12.13,   96.89, 2, "KEELING ISLANDS"),
+    (1650, -20.16,   57.50, 2, "MAURITIUS"),
+    (1660, -20.16,   57.50, 2, "MAURITIUS"),
+    (1680, -33.92,   18.42, 2, "CAPE TOWN"),
+    (1698, -33.92,   18.42, 2, "CAPE TOWN"),
+    (1716, -15.97,   -5.72, 2, "ST HELENA"),
+    (1722,  -7.93,  -14.36, 2, "ASCENSION"),
+    (1745, -12.97,  -38.50, 2, "BAHIA"),             # the famous re-crossing
+    (1760, -16.00,  -39.00, 0, "BRAZILIAN COAST"),
+    (1790,  16.90,  -24.98, 2, "CAPE VERDE"),
+    (1800,  38.53,  -28.63, 2, "AZORES"),
+    (1816,  50.72,   -1.88, 2, "FALMOUTH"),          # 2 Oct 1836
+)
+
+BEAGLE_NOTES = """
+Darwin towed a plankton net off the stern for much of the five years and
+wrote about what came up in it, which makes this the one voyage where the
+organisms in the frame are not a conceit.
+
+THE PACIFIC CROSSING (days 1395-1450). Galapagos to Tahiti, three thousand
+miles, and as with Drake the intermediate positions are a great-circle
+construction rather than a record.
+
+THE BRAZILIAN RE-CROSSING (day 1745). FitzRoy recrossed the Atlantic to
+Bahia to re-check his chronometer readings, adding a month to a voyage
+everyone aboard wanted finished. Darwin was furious about it and it is the
+reason the track doubles back before going home.
+
+RIO (days 100-191). Three months at anchor while Darwin worked ashore, which
+is the longest the piece ever sits in one water mass.
+"""
+
+
+VOYAGES = {}
+
+
+def register(v):
+    VOYAGES[v.key] = v
+    return v
+
+
+register(Voyage(
+    "drake", "DRAKE", "GOLDEN HIND  1577-1580", "13 DEC 1577",
+    DRAKE_WAYPOINTS, NOTES))
+
+register(Voyage(
+    "beagle", "DARWIN", "HMS BEAGLE  1831-1836", "27 DEC 1831",
+    BEAGLE_WAYPOINTS, BEAGLE_NOTES))
+
+
 def _norm_lon(d):
     return (d + 180.0) % 360.0 - 180.0
 
@@ -173,10 +321,15 @@ class Track:
     Cost per query is a binary search over 62 waypoints and one slerp. On the
     MCU this runs once a frame and disappears into the noise."""
 
-    def __init__(self, waypoints=WAYPOINTS):
-        self.wp = waypoints
-        self.vec = [_to_vec(w[1], w[2]) for w in waypoints]
-        self.days = [w[0] for w in waypoints]
+    def __init__(self, voyage=None):
+        if voyage is None:
+            voyage = VOYAGES["drake"]
+        elif isinstance(voyage, str):
+            voyage = VOYAGES[voyage]
+        self.voyage = voyage
+        self.wp = voyage.waypoints
+        self.vec = [_to_vec(w[1], w[2]) for w in self.wp]
+        self.days = [w[0] for w in self.wp]
 
     def _seg(self, day):
         lo, hi = 0, len(self.days) - 1

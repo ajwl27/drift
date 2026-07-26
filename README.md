@@ -8,13 +8,15 @@ you see on a laptop is what the panel will show.
 
 ```
 pip install pygame numpy pillow
-python3 drift.py
+python3 drift.py            # Drake, 1577-1580
+python3 drift.py beagle     # HMS Beagle, 1831-1836
 ```
 
 | key | |
 |---|---|
 | `space` | pause |
 | `m` | next screen now, and switch to the EXHIBIT cadence |
+| `v` | next voyage |
 | wheel | speed, continuously (shift+wheel for coarse jumps) |
 | `1`–`5` | speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per second |
 | `c` | clean mode — organisms and snow only |
@@ -40,7 +42,7 @@ minutes.
 | | |
 |---|---|
 | `drift.py` | the ecosystem and the renderer. `Canvas` is the only part rewritten in C on the port; everything above it ports unchanged. |
-| `voyage.py` | Drake's circumnavigation as 62 dated waypoints, great-circle interpolated. Pure functions of a day number. |
+| `voyage.py` | the voyages, as dated waypoint tables, great-circle interpolated. Pure functions of a day number. Adding one is a table and a `register()` call. |
 | `mapview.py` | orthographic chart, north up. |
 | `keyplate.py` | the key plate: a live census of what is in the water, plus voyage progress. |
 | `screens.py` | the rotation between the three screens, and the dissolve between them. |
@@ -49,6 +51,7 @@ minutes.
 | `tools/make_ocean.py` | WOA23 / OISST / Ifremer netCDF → the packed ocean in `data/`. |
 | `tools/plot_track.py` | the ocean along the whole voyage, as a diagnostic plot. |
 | `tools/check_biogeography.py` | does the emergent composition match known biogeography? `run 5` to sweep five seeds and find out. |
+| `tools/make_card.py` | the printed card for the box: whole-track chart plus the facts and the caveats. |
 | `plan.md` | where this is going. |
 
 ## Data

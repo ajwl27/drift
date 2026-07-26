@@ -855,6 +855,51 @@ organism, it stops being a legible semantic layer and becomes noise.
 
 ---
 
+## 8b. Other voyages — **done**, and it changes what the object is for
+
+You want to make several of these as gifts. That turns a fixed track into a
+parameter, and it is a small refactor with a large consequence.
+
+`Voyage` is now a container — title, subtitle, departure, waypoints, notes —
+and `VOYAGES` is a registry. `Track(voyage)` takes one. **The ecosystem never
+learns which voyage it is on**, which is what makes this cheap: it only ever
+sees a latitude, a longitude and a day number. Adding a voyage is writing a
+table and registering it. On the hardware it is a build-time constant, so the
+others cost nothing.
+
+Two are in: **Drake** (Golden Hind, 1577–80, 1018 days, 35,789 nm, 20% at
+anchor) and **Darwin** (HMS *Beagle*, 1831–36, 1816 days, 39,535 nm, 30% at
+anchor).
+
+The Beagle is the right second one, and not only because it's famous. Darwin
+towed a plankton net off the stern for much of the five years and wrote about
+what came up in it, so of every voyage that could go in this frame it is the
+one where the organisms are not a conceit. It also crosses water Drake never
+saw — the Galapagos, Tahiti, New Zealand, the Australian bight, Keeling — so
+two of these side by side show visibly different oceans rather than the same
+one twice.
+
+**Candidates for the rest**, in order of how different the ocean would look:
+
+| Voyage | Why it earns a box | Watch out for |
+|---|---|---|
+| **Cook, *Endeavour* 1768–71** | Your Australia one. Tahiti, the transit of Venus, New Zealand circumnavigated, the east coast, the Barrier Reef. Ocean nobody else on this list crosses. | Well documented, so the track is easy and long. |
+| **Magellan–Elcano 1519–22** | The first. Ends with 18 of 270 men alive, which the card can say plainly. | The Pacific crossing is 99 days of nothing — even emptier than Drake's. |
+| **Tasman 1642–43** | Discovered Tasmania and New Zealand, and the Southern Ocean legs are the most productive water on any of these tracks. | Short; would run in under a year. |
+| **Shackleton, *Endurance* 1914–17** | The Weddell Sea and the *James Caird*. Krill, salps and Corethron are already in the roster and it is the only track that would be dominated by them. | The ship is beset and drifting for ten months — which the model handles, because drifting is just a slow track. |
+| **Slocum, *Spray* 1895–98** | First solo circumnavigation. A quieter, more personal object. | |
+
+**The card** — `tools/make_card.py <voyage>` emits the chart and a Markdown
+card. The chart is the **whole track on one globe**, drawn with the same 1-bit
+renderer the panel uses, which makes the paper the *complement* of the object
+rather than a picture of it: the panel is always centred on the ship and never
+shows the voyage entire. The card carries the facts, the notes on where the
+record is thin, and the section headed *What is honestly wrong with it* —
+because a gift that admits its own approximations is a better object than one
+that doesn't.
+
+---
+
 ## 9. Stages
 
 Each stage ends in something that runs. Nothing is ordered until Stage 3.
@@ -866,7 +911,7 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 | **2** | ✅ Screen rotation | `screens.py` — Bayer dissolve, GALLERY/EXHIBIT cadences, `m` key. Voyage on one clock with the ecosystem. `--voyage` renders all 1018 days. | done |
 | **3** | ✅ Ocean data pipeline | `tools/make_ocean.py`, `ocean.py`, `data/ocean.bin` (475 kB at 2°), `tools/plot_track.py` → `docs/ocean_track.png`. Environment wired to it. | done |
 | **4** | ✅ Trait refactor | Trait table + allometry + defence + picoplankton. `tools/check_biogeography.py run 5` is the gate, and it passes. | done |
-| **5** | New morphologies | 12 draw functions (9 large, 3 small), one at a time, each checked at both 20 px **and r = 3** on the real canvas before the next. Each also needs a name, a three-word role and a `KEY_R` for the key plate. | ~2–3 sessions |
+| **5** | ✅ New morphologies | Eleven added, roster of 18. Extents measured rather than guessed. All checks pass. | done |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |

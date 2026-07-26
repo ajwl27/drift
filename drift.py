@@ -24,6 +24,7 @@ Keys:
     wheel       speed, continuously (shift+wheel for coarse jumps)
     1 2 3 4 5   speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per sec
     m           next screen now, and switch to the EXHIBIT cadence
+    v           next voyage
     c           CLEAN MODE -- organisms and snow only, all chrome hidden
     h           toggle HUD
     p           toggle the footer / map and key plate chrome
@@ -37,6 +38,8 @@ voyage rate. At the default 1 MIN/SEC a simulated day takes 24 real minutes
 and the whole circumnavigation takes 17 real days: slow enough to be a thing
 that sits there, fast enough that it has moved between one look and the
 next.
+
+    python3 drift.py beagle     # or any key in voyage.VOYAGES
 
 Headless (writes stills, no pygame needed):
     python3 drift.py --stills out/
@@ -2173,7 +2176,7 @@ def draw_plate(eco, c, track=None, day=None):
     the right. So the eye learns in a day that the right-hand column is where
     the answer to 'where are we and what are we doing' lives."""
     y = H - 24
-    text(c, 8, y, "DRIFT")
+    text(c, 8, y, track.voyage.title if track is not None else "DRIFT")
 
     if track is not None and day is not None:
         la, lo = track.position(day)
@@ -2276,9 +2279,12 @@ def speed_label(dps):
 
 
 def to_pil(canvas):
+    """Any canvas, not just the panel -- the card generator draws a square
+    one, and hard-coding the panel's shape here meant it could not."""
     from PIL import Image
     import numpy as np
-    arr = np.frombuffer(bytes(canvas.buf), dtype=np.uint8).reshape(H, W)
+    arr = np.frombuffer(bytes(canvas.buf), dtype=np.uint8).reshape(
+        canvas.h, canvas.w)
     # ink is 1 -> dark; paper is 0 -> light. Matches a reflective panel.
     img = np.where(arr > 0, 26, 232).astype(np.uint8)
     return Image.fromarray(img, mode="L")
@@ -2323,12 +2329,13 @@ def preview():
     pygame.display.set_caption("Drift")
     clock = pygame.time.Clock()
 
-    from voyage import Track
+    from voyage import Track, VOYAGES
     from mapview import Coast
     from ocean import Ocean
     from screens import Rotation, Compositor, GALLERY
 
-    track = Track()
+    track = Track(sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in
+                  __import__("voyage").VOYAGES else "drake")
     coast = Coast("data/coast.bin")
     ocean = Ocean("data/ocean.bin")
     eco = Ecosystem(seed=None, start_day=0.0, track=track, ocean=ocean)
@@ -2373,6 +2380,16 @@ def preview():
                     view.chemo = not view.chemo
                 elif e.key == pygame.K_m:
                     rot.skip()
+                elif e.key == pygame.K_v:
+                    # next voyage. The ecosystem is rebuilt because it is
+                    # sailing somewhere else now, and it never knew which
+                    # voyage it was on in the first place.
+                    keys = sorted(VOYAGES)
+                    i = (keys.index(track.voyage.key) + 1) % len(keys)
+                    track = Track(keys[i])
+                    eco = Ecosystem(seed=None, start_day=0.0, track=track,
+                                    ocean=ocean)
+                    print("voyage: %s" % track.voyage.subtitle)
                 elif e.key == pygame.K_r:
                     eco = Ecosystem(seed=None, start_day=eco.t, track=track,
                                     ocean=ocean)
@@ -2423,7 +2440,7 @@ def preview():
     pygame.quit()
 
 
-def voyage_sweep(outdir, every=30, seed=7, log_every=10):
+def voyage_sweep(outdir, every=30, seed=7, log_every=10, voyage="drake"):
     """Run the whole circumnavigation headless and lay it out as a contact
     sheet, one panel per `every` days.
 
@@ -2437,7 +2454,7 @@ def voyage_sweep(outdir, every=30, seed=7, log_every=10):
     from PIL import Image
 
     os.makedirs(outdir, exist_ok=True)
-    track = Track()
+    track = Track(voyage)
     try:
         ocean = Ocean("data/ocean.bin")
     except (IOError, OSError):
@@ -2505,6 +2522,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--stills":
         stills(sys.argv[2])
     elif len(sys.argv) > 2 and sys.argv[1] == "--voyage":
-        voyage_sweep(sys.argv[2])
+        voyage_sweep(sys.argv[2],
+                     voyage=sys.argv[3] if len(sys.argv) > 3 else "drake")
     else:
         preview()
