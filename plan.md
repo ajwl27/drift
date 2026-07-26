@@ -912,6 +912,7 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 | **3** | ✅ Ocean data pipeline | `tools/make_ocean.py`, `ocean.py`, `data/ocean.bin` (475 kB at 2°), `tools/plot_track.py` → `docs/ocean_track.png`. Environment wired to it. | done |
 | **4** | ✅ Trait refactor | Trait table + allometry + defence + picoplankton. `tools/check_biogeography.py run 5` is the gate, and it passes. | done |
 | **5** | ✅ New morphologies | Eleven added, roster of 18. Extents measured rather than guessed. All checks pass. | done |
+| **5b** | ✅ Sea routing | `tools/make_landmask.py` + `tools/make_route.py`. Both voyages audit at zero land crossings. Build-time only. | done |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |
@@ -921,6 +922,12 @@ organisms are the fun part and a trait refactor is not. Resist it: if the
 biogeography comes out wrong and sixteen morphologies changed at the same time,
 there is no way to tell whether the model is wrong or the drawing is. Stage 4
 must be provably right with the existing seven silhouettes first.
+
+**Stage 6 must include looking at the pictures, as a step.** The grazer mass
+bug in Stage 5 — krill outweighing everything they ate, a food pyramid
+standing on its point — was invisible to every metric in the checker and
+obvious in one glance at a key plate. Metrics catch what you thought to
+measure.
 
 **Stage 6 is not optional and is bigger than it looks.** Everything before it is
 mechanism; Stage 6 is the only stage where anyone finds out whether the object is

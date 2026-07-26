@@ -143,9 +143,29 @@ def presence(rows, group):
                if sum(float(r[k]) for k in group) > 0.05) / float(len(rows))
 
 
+MIN_SEEDS = 3
+
+
 def check(paths):
     runs = [measure(load(p)) for p in paths]
     n = len(runs)
+    if n < MIN_SEEDS:
+        # Refusing rather than reporting. Run on the committed single sweep,
+        # this tool said the Humboldt was 26% diatoms and failed -- while the
+        # four-seed median was 90%. One seed is one afternoon's weather, and a
+        # tool that will pronounce on it invites exactly the misreading it
+        # exists to prevent.
+        print("REFUSING: %d run%s given, need %d.\n"
+              "One seed is one afternoon's weather -- the regional shares swing"
+              " by a factor of three\nacross seeds, so a verdict on a single "
+              "sweep is a coin toss dressed as a test.\n\n"
+              "    python3 tools/check_biogeography.py run %d\n"
+              % (n, "" if n == 1 else "s", MIN_SEEDS, MIN_SEEDS + 1))
+        for i, (name, _, _, op, thr, _) in enumerate(TESTS):
+            print("  %-40s %5.1f%%  (threshold %s %.1f%%)"
+                  % (name, 100 * median([r["tests"][i] for r in runs]),
+                     op if op != "presence" else ">", 100 * thr))
+        return 0
 
     print("VOYAGE BIOMASS SHARE  (median over %d seed%s)" % (n, "" if n == 1 else "s"))
     med = {k: median([100 * r["share"][k] / sum(r["share"].values()) for r in runs])
