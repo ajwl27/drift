@@ -1,7 +1,7 @@
 # DARWIN
 ## HMS BEAGLE  1831-1836
 
-*1816 days · 39,535 nautical miles · 31% of it at anchor*
+*1816 days · 42,360 nautical miles · 31% of it at anchor*
 
 ![the track](card_beagle_chart.png)
 
@@ -27,8 +27,8 @@ currently in the water, with names.
 
 ### The track
 
-64 dated positions, great-circle interpolated. It reaches 51°N
-in the north and 56°S in the south. 3 of the positions are
+139 dated positions, great-circle interpolated. It reaches 51°N
+in the north and 56°S in the south. 78 of the positions are
 reconstructed rather than recorded — mostly the long ocean crossings, where
 nobody wrote anything down for weeks at a time.
 

@@ -1,7 +1,7 @@
 # DRAKE
 ## GOLDEN HIND  1577-1580
 
-*1018 days · 35,789 nautical miles · 21% of it at anchor*
+*1018 days · 37,228 nautical miles · 21% of it at anchor*
 
 ![the track](card_drake_chart.png)
 
@@ -27,8 +27,8 @@ currently in the water, with names.
 
 ### The track
 
-62 dated positions, great-circle interpolated. It reaches 50°N
-in the north and 56°S in the south. 7 of the positions are
+115 dated positions, great-circle interpolated. It reaches 50°N
+in the north and 56°S in the south. 60 of the positions are
 reconstructed rather than recorded — mostly the long ocean crossings, where
 nobody wrote anything down for weeks at a time.
 
