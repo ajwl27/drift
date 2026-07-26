@@ -59,6 +59,8 @@ LON = 0.0200
 Z_MAX = 55.0              # metres of water column mapped to the panel height
 MAX_PHYTO = 30             # separate caps, or phytoplankton crowd out the
 MAX_ZOO = 7                # grazers entirely during a bloom
+IMMIGRATION = 0.7          # new arrivals per day, at any population. See the
+                           # note on _immigrate.
 MAX_AGENTS = MAX_PHYTO + MAX_ZOO   # render cost lives here
 SNOW_COUNT = 80            # fine unresolved detritus, decorative
 MAX_DETRITUS = 46          # resolved particles, from actual deaths
@@ -97,8 +99,30 @@ K_WATER = 0.035            # background light attenuation, /m
 K_CHL = 0.055               # extra attenuation per unit biomass (self-shading)
 N_DEEP = 13.0              # deep nutrient reservoir
 GRAZE_RADIUS = 26.0        # metres... artistic licence, see note below
-RESPIRATION = 0.06
+RESPIRATION = 0.06         # per day, at the reference size. Scaled
+                           # allometrically per type -- see RESP_EXP.
 K_PREY = 10.0              # prey half-saturation, in agents. See _graze_f.
+
+# --- picoplankton --------------------------------------------------------
+# Not agents. A 0.7 um Prochlorococcus is a thousandth of a pixel, and there
+# are a hundred thousand of them per millilitre -- they are the single largest
+# pool of living carbon on the track and they cannot be drawn as individuals.
+# So they are a scalar per depth bin, rendered as the stipple.
+#
+# Carrying them is not decoration. They are what a subtropical gyre is
+# actually made of, they are the prey the microzooplankton had none of, and
+# they are what a mixotroph eats when there is nothing else. Without them the
+# gyres had no small-cell class at all, and the smallest thing that WAS
+# resolved -- a 30 um pennate diatom -- inherited the ecological role of a
+# picoplankton without paying any of its costs.
+MU_PICO = 1.70             # /day. Small, fast, shade-adapted.
+K_PICO = 0.10              # the lowest half-saturation in the model, which is
+                           # the whole reason they own the oligotrophic ocean
+I_K_PICO = 0.045           # shade-adapted relative to the larger cells
+LOSS_PICO = 0.16
+T_OPT_PICO, T_W_PICO = 24.0, 13.0     # warm-restricted (Flombaum et al. 2013)
+PICO_MAX = 4.0
+PICO_GRAZE = 0.55          # how fast a microzooplankton clears its bin
 
 # NOTE ON SCALE. The depth axis is real: it drives light, nutrients and diel
 # migration. Organism size is NOT to scale -- a 60 um diatom would be a
@@ -505,6 +529,12 @@ RADIOLARIAN, CENTRIC, PENNATE, CHAIN, CERATIUM, COPEPOD, TINTINNID = range(7)
 
 AUTO, MIXO, HETERO = range(3)
 
+KIND_NAME = {
+    RADIOLARIAN: "radiolarian", CENTRIC: "centric", PENNATE: "pennate",
+    CHAIN: "chain", CERATIUM: "ceratium", COPEPOD: "copepod",
+    TINTINNID: "tintinnid",
+}
+
 # Who eats how.  Diatoms are strict phototrophs.  Ceratium and the
 # radiolarian are mixotrophs -- they photosynthesise AND ingest, which is why
 # they persist through the nutrient-starved summer when the diatoms cannot.
@@ -529,16 +559,192 @@ EXTENT = {
 }
 
 
+# --------------------------------------------------------------------------
+# TRAITS
+# --------------------------------------------------------------------------
+#
+# The point of this table is what is NOT in it.  There is no column saying
+# where anything lives, and no rule anywhere that mentions a place.  Each
+# organism carries a size, a growth intercept and a thermal preference; the
+# ocean carries conditions; and who wins falls out.  If the panel fills with
+# diatom chains off Peru it is because the model worked out that a high
+# maximum growth rate beats a good nutrient affinity when nutrients are
+# abundant -- not because a table said PERU -> DIATOMS.
+#
+# Almost everything is DERIVED from size, using published allometry rather
+# than invented numbers:
+#
+#     mu_max  proportional to  V^-0.25     Edwards et al. 2012, marine,
+#     K_N     proportional to  V^+0.30     95% CI (-0.20,-0.29) and
+#     sinking proportional to  V^+0.39     (+0.26,+0.42); Ward et al. 2012
+#
+# and since V goes as ESD cubed, those become ESD^-0.75, ESD^+0.90 and
+# ESD^+1.17.  That single trade-off -- small cells scavenge better, large
+# cells grow faster in absolute terms -- is the entire engine of size-based
+# biogeography, and it is why this is a two-hour refactor rather than a new
+# model.
+#
+# The one genuine taxonomic exception, and it is the important one: Edwards
+# et al. find that when you control for volume, between-taxon differences
+# mostly vanish EXCEPT that diatoms grow significantly faster than
+# dinoflagellates and others at the same size (p<0.001).  Ward et al. put the
+# intercept at 3.8 for diatoms against 2.1 for other eukaryotes.  So diatoms
+# get a higher INTERCEPT, not a different exponent.  That is the whole of
+# "diatoms are the weeds", and it is one number.
+
+ESD_REF = 50.0             # microns; the size the base rates are quoted at
+MU_EXP = -0.75             # per ESD, from Edwards' V^-0.25
+K_EXP = 0.90               # per ESD, from Edwards' V^+0.30
+W_EXP = 1.17               # per ESD, from Ward's V^+0.39
+RESP_EXP = -0.75           # Respiration goes as V^0.75, so MASS-SPECIFIC
+                           # respiration goes as V^-0.25 -- the same exponent
+                           # as growth, and per ESD the same -0.75. This is
+                           # the large cell's half of the bargain: it grows
+                           # slowly, and it also burns slowly, so it survives
+                           # the gaps that starve a fast small one. Leaving it
+                           # flat gave every type the same maintenance cost
+                           # and quietly deleted the entire K-strategist
+                           # advantage from the model.
+Q10_EPPLEY = 1.066         # Eppley 1972: mu_max envelope goes as 1.066^T
+T_REF = 15.0
+
+# kind: (esd_um, intercept, T_opt, T_width, buoyancy, defence)
+#   esd_um     equivalent spherical diameter. A Chaetoceros cell is ~10 um but
+#              behaves as a 40 um chain, and that is what the traits should
+#              see -- the chain is the organism, ecologically.
+#   intercept  1.00 for diatoms, 0.55 for other eukaryotes (2.1/3.8, Ward).
+#   T_opt      thermal optimum, C. The niche is Gaussian about it, riding on
+#              the Eppley envelope so a warm-adapted type genuinely has a
+#              higher ceiling rather than merely a shifted one.
+#   T_width    and the width matters as much as the centre. The three diatoms
+#              started at optima of 12, 14 and 15 with widths of 12 to 14 --
+#              which is not three organisms, it is one organism with three
+#              drawings, and whichever was marginally best took all three
+#              niches. Chaetoceros socialis is a cold-water bloom former,
+#              Coscinodiscus a temperate-to-subtropical shelf diatom; giving
+#              them 8 C and 20 C with narrow widths is both truer and the
+#              thing that finally makes them different organisms.
+#   defence    multiplier on how readily this type is grazed. THIS IS THE
+#              TRADE-OFF, and leaving it out is what made the model collapse
+#              to one winner. Pure allometry says a small cell has both a
+#              higher growth rate and a lower half-saturation than a large
+#              one -- it is better at everything -- so with size as the only
+#              axis the smallest type wins the entire ocean, and it did: 91%
+#              of the voyage. What a large diatom buys with its size is not
+#              a physiological advantage, it is not being eaten. Chaetoceros
+#              setae are an anti-grazing structure, Coscinodiscus has a thick
+#              frustule, Ceratium has horns, the radiolarian has spines.
+#              Which is a happy convergence: the features that make an
+#              organism worth drawing are the same ones that make it hard to
+#              swallow. Coscinodiscus gets 0.30 rather than 0.50 for the same
+#              reason: a heavily silicified 100 um frustule is famously
+#              rejected by copepods, and at 0.50 it was strictly dominated by
+#              the chain on every axis and sat at 2% of the voyage.
+#   buoyancy   multiplier on the allometric sinking rate. Chains resist
+#              sinking, and so does a large centric -- Coscinodiscus is mostly
+#              vacuole and regulates its density, which is the whole reason a
+#              cell that size is viable. At buoyancy 1.0 it sank out of a 55 m
+#              column in under a week and went functionally extinct across the
+#              entire voyage. Motile forms barely sink at all.
+TRAITS = {
+    CHAIN:       ( 40.0, 1.00,  8.0,  8.0, 0.45, 0.30),
+    PENNATE:     ( 30.0, 1.00, 15.0,  9.0, 1.00, 1.00),
+    CENTRIC:     (100.0, 1.00, 20.0,  9.0, 0.45, 0.30),
+    CERATIUM:    (150.0, 0.55, 24.0,  8.0, 0.05, 0.35),
+    RADIOLARIAN: (300.0, 0.55, 25.0, 11.0, 0.10, 0.25),
+    TINTINNID:   ( 60.0, 0.55, 18.0, 12.0, 0.00, 0.60),
+    COPEPOD:     (1500.0, 0.55, 12.0, 14.0, 0.00, 1.00),
+}
+
+# Optimal predator:prey length ratio, PER FEEDING TYPE.
+#
+# A single ratio of 10 for everything is the number Ward et al. use, and it is
+# a mean across all zooplankton rather than a fact about any of them. Hansen,
+# Bjornsen & Hansen (1994) measured it by group, and the groups differ by more
+# than an order of magnitude: copepods around 18:1, ciliates around 8:1,
+# dinoflagellates close to 1:1 because they engulf prey their own size.
+#
+# This is not a detail. At a flat 10:1 a 1500 um copepod's optimum is a 150 um
+# cell, so it grazed the large slow types hard and barely touched the small
+# fast ones -- which left the smallest, fastest-growing, lowest-half-saturation
+# type with the best traits in the model AND almost no predator. It took 88%
+# of the entire voyage. At the measured 18:1 the copepod's optimum moves to
+# 83 um, which sits between the centric and the pennate and grazes both.
+#
+# The lesson worth keeping: competitive exclusion here was not a bug in the
+# competition. It was a missing predator.
+GRAZE_RATIO = {
+    COPEPOD: 18.0,          # Hansen et al. 1994
+    TINTINNID: 8.0,         # ciliates
+    CERATIUM: 3.0,          # dinoflagellates engulf prey near their own size
+    RADIOLARIAN: 5.0,       # large rhizarian, catches a wide range on spines
+}
+GRAZE_SIGMA = 0.90         # width of the kernel, in natural logs. Ward et al.
+# use 0.5; 0.9 here because with only five drifters the size axis is sparse
+# and a narrow kernel leaves gaps that no predator covers. Stage 5's small
+# forms are what let this come back to the literature value.
+
+
+def _derive():
+    """Precompute the per-type rates once. On the MCU this is a const table
+    generated at build time; the point of computing it here is that the
+    allometry stays visible in the source instead of becoming magic numbers."""
+    out = {}
+    for k, (esd, icept, topt, twidth, buoy, defence) in TRAITS.items():
+        s = esd / ESD_REF
+        out[k] = (
+            icept * s ** MU_EXP,               # 0 growth multiplier
+            s ** K_EXP,                        # 1 half-saturation multiplier
+            buoy * s ** W_EXP,                 # 2 sinking multiplier
+            topt, twidth,                      # 3, 4
+            Q10_EPPLEY ** (topt - T_REF),      # 5 Eppley ceiling at T_opt
+            math.log(esd),                     # 6 for the grazing kernel
+            RESPIRATION * s ** RESP_EXP,       # 7 -> shifted, see below
+            defence,                           # 8
+        )
+    return out
+
+
+DERIVED = _derive()
+
+
+def temp_factor(kind, T):
+    """Eppley envelope times a Gaussian niche.
+
+    The envelope alone would say every organism grows three times faster in
+    the tropics, which is why the warm oligotrophic Pacific was blooming. The
+    niche alone would lose the real fact that warm water genuinely does
+    support faster maximum growth. Both together say: each type has a
+    temperature it likes, and types that like warm water have a higher
+    ceiling when they get it."""
+    d = DERIVED[kind]
+    x = (T - d[3]) / d[4]
+    return d[5] * math.exp(-x * x)
+
+
+def graze_pref(pred_kind, prey_kind):
+    """Log-normal size preference. A copepod at 1500 um wants prey near
+    150 um; a tintinnid at 60 um wants 6 um. Nothing switches on species."""
+    ratio = GRAZE_RATIO.get(pred_kind, 10.0)
+    r = DERIVED[pred_kind][6] - DERIVED[prey_kind][6] - math.log(ratio)
+    return (math.exp(-(r * r) / (2.0 * GRAZE_SIGMA * GRAZE_SIGMA))
+            * DERIVED[prey_kind][8])
+
+
 class Genome:
     """A handful of numbers that fully determine an individual's appearance.
     Same genome, same drawing, forever -- so a cell that divides produces two
     daughters that look like siblings, not strangers."""
 
-    __slots__ = ("kind", "size", "sym", "ornament", "aspect", "curl", "seed")
+    __slots__ = ("kind", "size", "sym", "ornament", "aspect", "curl", "seed",
+                 "jitter")
 
     def __init__(self, kind, rng):
         self.kind = kind
         self.seed = rng.randrange(1 << 30)
+        # lognormal spread on maximum growth rate, sigma ~0.35. Two cells of
+        # the same type are not the same organism.
+        self.jitter = math.exp(rng.gauss(0.0, 0.35))
         self.sym = rng.choice((6, 7, 8, 9, 10, 12))
         self.ornament = rng.uniform(0.3, 1.0)
         self.aspect = rng.uniform(0.25, 0.55)
@@ -567,6 +773,10 @@ class Genome:
         g.aspect = max(0.2, min(0.7, self.aspect + rng.gauss(0, 0.03)))
         g.curl = self.curl + rng.gauss(0, 0.06)
         g.size = self.size * rng.uniform(0.93, 1.07)
+        # heritable, but it drifts -- so a lineage founded by a fast individual
+        # stays fast for a while and then regresses, rather than either being
+        # fixed forever or resampled from scratch every division
+        g.jitter = max(0.35, min(3.0, self.jitter * math.exp(rng.gauss(0.0, 0.12))))
         return g
 
 
@@ -865,6 +1075,8 @@ class Ecosystem:
         self.no3 = [3.0 + N_DEEP * (i / NBINS) ** 1.4 for i in range(NBINS)]
         self.nh4 = [0.25] * NBINS
         self.nit = [0.06] * NBINS          # chemoautotroph biomass per bin
+        self.pico = [0.35] * NBINS         # picoplankton, the unresolved
+                                           # small-cell class. See the note.
         self.agents = []
         self.det = []
         self._graze_f = 1.0
@@ -884,10 +1096,36 @@ class Ecosystem:
         i = int(z / BIN_M)
         return 0 if i < 0 else (NBINS - 1 if i >= NBINS else i)
 
+    def _seed_kind(self):
+        """Which type arrives next.
+
+        Weighted toward whatever is currently absent -- "everything is
+        everywhere, the environment selects". Without this the model
+        extinction-locks: a type that loses in one ocean is gone from the
+        pool, so when the ship reaches water that would suit it there is
+        nothing left to succeed. That failure would look exactly like
+        competitive exclusion working correctly, which is what makes it
+        dangerous.
+
+        Weighting rather than forcing: a type that is genuinely unsuited still
+        arrives and still dies, which is the point."""
+        r = self.rng
+        present = {}
+        for a in self.agents:
+            if not a.doomed:
+                present[a.g.kind] = present.get(a.g.kind, 0) + 1
+        w = [1.0 / (1.0 + 2.5 * present.get(k, 0)) for k in DRIFTER_KINDS]
+        pick = r.random() * sum(w)
+        for k, wt in zip(DRIFTER_KINDS, w):
+            pick -= wt
+            if pick <= 0.0:
+                return k
+        return DRIFTER_KINDS[-1]
+
     def _spawn_drifter(self, parent=None):
         r = self.rng
         if parent is None:
-            g = Genome(r.choice(DRIFTER_KINDS), r)
+            g = Genome(self._seed_kind(), r)
             z = r.uniform(2, Z_MAX * 0.85)
             # arrive at an edge and drift in, rather than appearing mid-frame
             x = r.uniform(-5, 5) if r.random() < 0.5 else r.uniform(W - 5, W + 5)
@@ -906,6 +1144,19 @@ class Ecosystem:
                   r.uniform(0.8, 1.4), r, 0.02)
         self.agents.append(a)
         return a
+
+    def _enforce_cap(self):
+        """Cull to MAX_PHYTO, weakest first. Vigour is the running integral of
+        realised growth rate, so it is exactly the right measure: the cells
+        that go are the ones the environment was already failing."""
+        live = [a for a in self.agents
+                if a.g.kind in DRIFTER_KINDS and not a.doomed]
+        excess = len(live) - MAX_PHYTO
+        if excess <= 0:
+            return
+        live.sort(key=lambda a: (a.vigour, a.mass))
+        for a in live[:excess]:
+            self._die(a)
 
     def _die(self, a):
         if a.doomed:
@@ -958,6 +1209,31 @@ class Ecosystem:
             self.nit[i] += (rate * Y_NIT - LOSS_NIT * self.nit[i]) * dt
             self.nit[i] = max(0.004, min(1.2, self.nit[i]))
 
+    def _step_pico(self, dt, surface, chl, t):
+        """Picoplankton, as a scalar field. Monod on the same nitrogen the
+        agents compete for, so this is a real competitor and not a backdrop --
+        in a gyre it wins that competition, draws the surface down to nothing,
+        and that is precisely why the large cells cannot get started."""
+        env = self.env
+        for i in range(NBINS):
+            z = (i + 0.5) * BIN_M
+            I = self.light_at(z, surface, chl)
+            n = self.nh4[i] + self.no3[i]
+            x = (env.temperature(t, z) - T_OPT_PICO) / T_W_PICO
+            f_t = (Q10_EPPLEY ** (T_OPT_PICO - T_REF)) * math.exp(-x * x)
+            mu = (MU_PICO * (I / (I + I_K_PICO)) * (n / (n + K_PICO))
+                  * f_t * min(1.0, self._iron / (self._iron + 0.04))
+                  - LOSS_PICO)
+            grow = self.pico[i] * mu * dt
+            self.pico[i] = max(0.02, min(PICO_MAX, self.pico[i] + grow))
+            if grow > 0.0:
+                want = grow * 0.16
+                take = min(self.nh4[i], want)
+                self.nh4[i] -= take
+                self.no3[i] = max(0.01, self.no3[i] - (want - take))
+            else:
+                self.nh4[i] += -grow * 0.5      # lysis returns ammonium
+
     def _step_detritus(self, dt):
         keep = []
         for d in self.det:
@@ -971,28 +1247,43 @@ class Ecosystem:
                 keep.append(d)
         self.det = keep
 
-    def _ingest(self, a, dt, small_only):
-        """Heterotrophy. Mixotrophs and heterotrophs share this; they differ
-        only in what they accept and how fast. Returns mass ingested."""
+    def _ingest(self, a, dt):
+        """Heterotrophy, by size rather than by species.
+
+        Was a small_only boolean, which is a rule about who eats whom written
+        by hand. This is a log-normal preference kernel centred on a
+        predator:prey length ratio of ten -- so a copepod at 1500 um takes
+        150 um prey and a tintinnid at 60 um takes 6 um prey, and neither of
+        them was told anything about the other. Add a new organism to the
+        roster and its position in the food web is already decided by how big
+        it is."""
         rng = self.rng
         got = 0.0
         reach = 30.0 if a.g.kind == COPEPOD else 18.0
         zreach = reach * 0.30
-        for d in self.det:
-            if abs(d.z - a.z) < zreach and abs(d.x - a.x) < reach:
+        for dd in self.det:
+            if abs(dd.z - a.z) < zreach and abs(dd.x - a.x) < reach:
                 if rng.random() < 1.2 * dt:
-                    take = min(d.mass, 0.45)
-                    d.mass -= take
+                    take = min(dd.mass, 0.45)
+                    dd.mass -= take
                     got += take * 0.55
                     break
+        # the unresolved small-cell class. A copepod is far too big to filter
+        # picoplankton directly; everything smaller lives on it, and in a gyre
+        # it is the only food there is.
+        if a.g.kind != COPEPOD:
+            i = self._bin(a.z)
+            take = min(self.pico[i] - 0.02,
+                       PICO_GRAZE * self.pico[i] * dt)
+            if take > 0.0:
+                self.pico[i] -= take
+                got += take * 0.85
         rate = (2.0 if a.g.kind == COPEPOD else 0.85) * self._graze_f
         for p in self.agents:
             if p is a or p.doomed or p.g.kind not in DRIFTER_KINDS:
                 continue
-            if small_only and p.mass > 1.05:
-                continue
             if abs(p.z - a.z) < zreach and abs(p.x - a.x) < reach:
-                if rng.random() < rate * dt:
+                if rng.random() < rate * graze_pref(a.g.kind, p.g.kind) * dt:
                     self._die(p)
                     got += p.mass * 0.45
                     self.nh4[self._bin(p.z)] += p.mass * 0.22   # sloppy feeding
@@ -1019,6 +1310,7 @@ class Ecosystem:
         daylight = min(1.0, surface / 0.20)
 
         self._mix_nitrogen(dt, mld, mixing)
+        self._step_pico(dt, surface, chl, t)
         self._nitrify(dt, surface, chl)
         self._step_detritus(dt)
         # Export flux: the unresolved fine fraction of dead matter also
@@ -1070,22 +1362,32 @@ class Ecosystem:
             no3 = self.no3[i]
             # ammonium is cheaper, so it is taken preferentially and it
             # suppresses nitrate uptake
-            f_nh4 = nh4 / (nh4 + K_S)
-            f_no3 = (no3 / (no3 + K_S)) * math.exp(-PSI * nh4)
+            d = DERIVED[a.g.kind]
+            ks = K_S * d[1]          # a big cell needs more, per the allometry
+            f_nh4 = nh4 / (nh4 + ks)
+            f_no3 = (no3 / (no3 + ks)) * math.exp(-PSI * nh4)
             # Liebig: whichever of nitrogen and iron is scarcer sets the
             # ceiling. In an HNLC region nitrogen is abundant and this term is
             # entirely iron, which is the whole point of carrying the field.
-            f_nut = min(1.0, f_nh4 + f_no3, self._iron)
-            f_temp = 1.8 ** ((env.temperature(t, a.z) - 11.0) / 10.0)
+            # Iron half-saturation scales with size the same way nitrogen does
+            # (Sunda & Huntsman 1997), so a big cell is iron-limited first.
+            f_fe = self._iron / (self._iron + 0.12 * d[1])
+            f_nut = min(1.0, f_nh4 + f_no3, f_fe)
+            f_temp = temp_factor(a.g.kind, env.temperature(t, a.z))
+            # a.g.jitter is the lognormal spread on growth rate. It is not
+            # cosmetic: it is what lets a subset of individuals land on an
+            # unusually favourable combination and found a bloom, which is how
+            # real diversity within a type actually behaves.
+            mu_max = MU_MAX * d[0] * a.g.jitter
 
             ingested = 0.0
             if a.mode == MIXO:
-                ingested = self._ingest(a, dt, small_only=True)
-                mu = (0.62 * MU_MAX * f_light * f_nut * f_temp
-                      - RESPIRATION - 0.12 * min(1.3, mld / Z_MAX))
+                ingested = self._ingest(a, dt)
+                mu = (0.62 * mu_max * f_light * f_nut * f_temp
+                      - d[7] - 0.12 * min(1.3, mld / Z_MAX))
             else:
-                mu = (MU_MAX * f_light * f_nut * f_temp
-                      - RESPIRATION - 0.34 * min(1.3, mld / Z_MAX))
+                mu = (mu_max * f_light * f_nut * f_temp
+                      - d[7] - 0.34 * min(1.3, mld / Z_MAX))
 
             grow = a.mass * mu * dt
             a.mass = min(2.45, a.mass + grow + ingested * 0.6)
@@ -1105,8 +1407,11 @@ class Ecosystem:
                 target = 5.0 + 30.0 * (1.0 - daylight)
                 a.z += (target - a.z) * min(1.0, 1.2 * dt)
             else:
-                drag = 0.45 if a.g.kind == CHAIN else 1.0
-                a.z += (0.4 + 3.6 * (1.0 - a.vigour)) * drag * dt
+                # Sinking is allometric and buoyancy is per-type. A starving
+                # cell sinks faster, which is real -- nutrient-stressed diatoms
+                # go from under 1 m/day to over 10 -- and it is also what
+                # exports a dead bloom out of the lit layer.
+                a.z += (0.4 + 3.6 * (1.0 - a.vigour)) * d[2] * dt
 
             if a.mass > 1.9 and n_drift + len(born) < MAX_PHYTO:
                 a.mass *= 0.5
@@ -1123,13 +1428,13 @@ class Ecosystem:
                 # do not sweep up and down as one rigid block
                 target = 7.0 + 14.0 * a.g.curl + 34.0 * daylight
                 a.z += (target - a.z) * min(1.0, 2.2 * dt)
-                a.mass += self._ingest(a, dt, small_only=False) * 1.4
+                a.mass += self._ingest(a, dt) * 1.4
                 a.mass -= 0.20 * dt
                 cap_ok = n_cope + sum(1 for b in born if b.g.kind == COPEPOD) < MAX_ZOO
             else:
                 target = 9.0 + 24.0 * (0.5 + 0.5 * a.g.curl)
                 a.z += (target - a.z) * min(1.0, 0.5 * dt)
-                a.mass += self._ingest(a, dt, small_only=True) * 1.1
+                a.mass += self._ingest(a, dt) * 1.1
                 a.mass -= 0.16 * dt
                 cap_ok = n_tint + sum(1 for b in born if b.g.kind == TINTINNID) < 4
             a.spin += rng.gauss(0, 2.5) * dt
@@ -1155,10 +1460,27 @@ class Ecosystem:
         # ---- remove only once fully faded out ------------------------------
         self.agents = [a for a in self.agents if a.vis > 0.0]
 
-        # ---- a resilient overwintering community: never a bare column ------
-        n_phyto = sum(1 for a in self.agents if a.g.kind in DRIFTER_KINDS)
-        if n_phyto < 12 and rng.random() < (2.5 + 3.5 * (1.0 - n_phyto / 12.0)) * dt:
-            self._spawn_drifter().mass = rng.uniform(0.35, 0.60)
+        # ---- immigration, and a cap held by fitness rather than by arrival --
+        #
+        # The reseed used to fire only when the population was below twelve,
+        # which meant that once the panel was full nothing new could ever
+        # arrive. Whoever filled the cap first held it until conditions
+        # crashed them -- so the community was decided by founder effect, and
+        # a type that would have won on the traits simply never got in. The
+        # composition log showed Chaetoceros holding the tropics at 100% for
+        # two hundred days on water that Navicula should have taken.
+        #
+        # So: arrivals are continuous and independent of how full it is, and
+        # the cap is paid for afterwards by whichever individuals are doing
+        # worst. A hard cap is a rendering constraint; making it a rendering
+        # constraint that culls the least fit is the only way to stop it
+        # behaving like an ecological one.
+        n_phyto = sum(1 for a in self.agents
+                      if a.g.kind in DRIFTER_KINDS and not a.doomed)
+        rate = IMMIGRATION + 4.0 * max(0.0, 1.0 - n_phyto / 12.0)
+        if rng.random() < rate * dt:
+            self._spawn_drifter().mass = rng.uniform(0.30, 0.55)
+        self._enforce_cap()
         if sum(1 for a in self.agents if a.g.kind == COPEPOD) < 1 and rng.random() < 0.8 * dt:
             self._spawn_het(COPEPOD)
         if sum(1 for a in self.agents if a.g.kind == TINTINNID) < 1 and rng.random() < 0.6 * dt:
@@ -1210,6 +1532,17 @@ class Ecosystem:
     @property
     def biomass(self):
         return sum(a.mass for a in self.agents if a.g.kind in DRIFTER_KINDS)
+
+    def composition(self):
+        """Biomass by type. The only diagnostic that can tell whether the
+        trait model works, because total biomass looks identical whether one
+        type wins everywhere or five take turns."""
+        out = {}
+        for a in self.agents:
+            if a.doomed or a.vis <= 0.03:
+                continue
+            out[a.g.kind] = out.get(a.g.kind, 0.0) + a.mass
+        return out
 
     @property
     def n_zoo(self):
@@ -1305,7 +1638,7 @@ def render(eco, canvas, view=DEFAULT_VIEW, track=None, day=None):
     if view.chemo:
         for (x, y, rank) in _stipple_points():
             i = min(NBINS - 1, max(0, int(((y - TOP_M) / zpx) / BIN_M)))
-            if rank < eco.nit[i] * 0.40:
+            if rank < eco.nit[i] * 0.30 + eco.pico[i] * 0.28:
                 canvas.px(x, y)
 
     if view.snow:
@@ -1645,11 +1978,13 @@ def voyage_sweep(outdir, every=30, seed=7):
             render(eco, canvas, view, track, eco.t)
             tiles.append(to_pil(canvas))
             la, lo = track.position(eco.t)
+            comp = eco.composition()
             log.append((int(eco.t), la, lo, eco.env.temperature(eco.t, 2.0),
                         eco.env.mixed_layer_depth(eco.t),
                         eco.env.deep_nitrate(eco.t), eco.env.iron(eco.t),
-                        eco.biomass, len(eco.agents), eco.n_zoo,
-                        track.status(eco.t)))
+                        eco.biomass, len(eco.agents), eco.n_zoo)
+                       + tuple(comp.get(k, 0.0) for k in DRIFTER_KINDS)
+                       + (track.status(eco.t),))
             nxt += every
 
     cols = 9
@@ -1662,9 +1997,13 @@ def voyage_sweep(outdir, every=30, seed=7):
     sheet.save(path)
 
     with open(os.path.join(outdir, "voyage.csv"), "w") as f:
-        f.write("day,lat,lon,sst,mld,deepN,iron,biomass,agents,zoo,status\n")
+        f.write("day,lat,lon,sst,mld,deepN,iron,biomass,agents,zoo,"
+                + ",".join(KIND_NAME[k] for k in DRIFTER_KINDS) + ",status\n")
         for r in log:
-            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%.2f,%.1f,%d,%d,%s\n" % r)
+            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%.2f,%.1f,%d,%d,"
+                    % r[:10]
+                    + ",".join("%.1f" % v for v in r[10:-1])
+                    + ",%s\n" % r[-1])
 
     bio = [r[7] for r in log]
     n = [r[8] for r in log]
