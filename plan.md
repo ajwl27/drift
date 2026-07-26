@@ -702,8 +702,8 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 |---|---|---|---|
 | **0** | ✅ Clean mode, wheel speed control | done, committed | — |
 | **1** | ✅ Track + course-up map | `voyage.py`, `mapview.py`, `data/coast.bin`, committed | — |
-| **2** | Screen rotation | Bayer dissolve, the GALLERY/EXHIBIT cadences, event triggers, `m` key. Key plate is prototyped (`keyplate.py`) and needs wiring in. Watchable end to end at 1 day/sec. | ~1 session |
-| **3** | Ocean data pipeline | `tools/make_ocean.py`, `data/ocean.bin` (127 kB), `Ocean` class. **Deliverable: a plot of SST/MLD/nitrate sampled along the whole track** — before any biology touches it. | ~1 session |
+| **2** | ✅ Screen rotation | `screens.py` — Bayer dissolve, GALLERY/EXHIBIT cadences, `m` key. Voyage on one clock with the ecosystem. `--voyage` renders all 1018 days. | done |
+| **3** | Ocean data pipeline | `tools/make_ocean.py`, `data/ocean.bin` (127 kB), `Ocean` class, replacing the latitudinal stopgap. **Deliverable: a plot of SST/MLD/nitrate sampled along the whole track** — before any biology touches it. | ~1 session |
 | **4** | Trait refactor | Constants → 16-row trait table. **Same 7 organisms, no new morphology.** Validate against the §6 checklist. This is the risky stage; do it alone. | ~2 sessions |
 | **5** | New morphologies | 9 draw functions, one at a time, each checked at 20 px on the real canvas before the next. Each also needs a name, a three-word role and a `KEY_R` for the key plate. | ~2 sessions |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
@@ -726,6 +726,20 @@ any good. Budget for it honestly.
 
 Ranked by probability × damage.
 
+0. **Grazers eat the ocean to zero.** *Already happened, already fixed —
+   recorded here because it is the template for the rest.* The first full-voyage
+   sweep put the panel at exactly zero phytoplankton on day 120 off the Río de la
+   Plata, and kept it near zero for fifty days. Not nutrients (surface N was 13.6)
+   and not light (peak irradiance 0.54): the tropical bloom off Brazil built up
+   eight copepods, the ship moved into cooler water, phytoplankton growth fell with
+   temperature, and the grazers took six weeks to follow it down — eating
+   everything in the meantime. That lag is the *same* mechanism the design relies
+   on to produce blooms at all, which is why it cannot simply be damped. The fix
+   was a Holling type III functional response: sigmoid in prey abundance, half
+   saturating around ten agents, so below that the grazers stop finding prey and
+   the population always keeps a seed. A refuge, not a floor — nothing is clamped,
+   the ecology just stops being able to reach zero. Verified over five seeds
+   sampling every simulated day: never below 5 individuals in 5,090 days.
 1. **Competitive exclusion — one type wins everywhere.** The most likely failure,
    and the one that makes the whole feature pointless. Mitigations, all in the
    design: continuous seeding, per-individual growth jitter, the fast/slow grazer
@@ -755,14 +769,30 @@ Ranked by probability × damage.
 
 ---
 
+## 10b. The clock — **decided**
+
+The voyage runs on **the same clock as the ecosystem**. There is no separate
+voyage rate to keep in step, and `Ecosystem.t` is simply days since Plymouth.
+
+Default speed is **1 MIN/SEC**: a simulated day takes 24 real minutes and the
+whole circumnavigation takes **17 real days**. Slow enough that nothing appears
+to be happening while you watch it; fast enough that it has visibly moved
+between one look and the next, which is the property that makes an object like
+this worth having on a shelf rather than worth watching once.
+
+The alternative — one voyage day per real day, 2 years 10 months — is a more
+remarkable fact about an object and a worse experience of one. At that rate the
+ship advances half a degree between breakfast and supper.
+
+At day 1018 the piece starts again **with a fresh seed**, so the second
+circumnavigation grows a different community in the same ocean. One line, and
+it is the difference between a loop and a repeat.
+
+---
+
 ## 11. Decisions still open
 
-1. **Voyage rate.** 1 voyage day per real day = **2 years 10 months**, and the
-   ecosystem runs in real time alongside it, which is coherent and beautiful and a
-   genuinely remarkable thing for an object to do. 3 days per real day ≈ 1 year.
-   The wheel control from Stage 0 means this is now a *runtime* setting rather than
-   a commitment — but it is still a decision about what the object *is*.
-2. **Ecosystem persistence across a power cycle.** If the RTC survives and the
+1. **Ecosystem persistence across a power cycle.** If the RTC survives and the
    state is written to flash occasionally, the piece resumes where it was. If not,
    every power cut restarts the voyage. Flash wear says write rarely; the concept
    says never lose the voyage. Probably: persist day number and RNG seed only, and

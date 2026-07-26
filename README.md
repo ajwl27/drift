@@ -14,13 +14,26 @@ python3 drift.py
 | key | |
 |---|---|
 | `space` | pause |
+| `m` | next screen now, and switch to the EXHIBIT cadence |
 | wheel | speed, continuously (shift+wheel for coarse jumps) |
 | `1`–`5` | speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per second |
 | `c` | clean mode — organisms and snow only |
-| `h` `p` `n` | HUD / plate furniture / chemoautotroph stipple |
+| `h` `p` `n` | HUD / footer and screen chrome / chemoautotroph stipple |
 | `s` `r` | save a PNG / reseed |
 
-Headless stills, no pygame needed: `python3 drift.py --stills out/`
+Headless, no pygame needed:
+
+```
+python3 drift.py --stills out/     # six dates across one year
+python3 drift.py --voyage  out/    # all 1018 days as a contact sheet, plus a CSV
+```
+
+The voyage runs on the same clock as the ecosystem. At the default 1 MIN/SEC a
+simulated day takes 24 real minutes and the circumnavigation takes 17 real days.
+
+Three screens rotate: water, chart, water, key plate. `GALLERY` is the default
+at ~2% chrome; `m` switches to `EXHIBIT` at 40% and it lapses back after five
+minutes.
 
 ## Layout
 
@@ -30,6 +43,7 @@ Headless stills, no pygame needed: `python3 drift.py --stills out/`
 | `voyage.py` | Drake's circumnavigation as 62 dated waypoints, great-circle interpolated. Pure functions of a day number. |
 | `mapview.py` | course-up orthographic on a portrait panel. |
 | `keyplate.py` | the key plate: a live census of what is in the water, plus voyage progress. |
+| `screens.py` | the rotation between the three screens, and the dissolve between them. |
 | `tools/make_coast.py` | Natural Earth shapefile → the packed coastline in `data/`. |
 | `plan.md` | where this is going. |
 
