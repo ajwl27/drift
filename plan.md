@@ -131,8 +131,8 @@ writing the driver rather than porting that one.
 ### 3. Morphology is the main visual interest
 
 So morphology is not decoration on top of the model — it *is* the model's output
-channel. Sixteen types, chosen for silhouette separation as much as for ecology.
-See §6.
+channel. Nineteen types, chosen for silhouette separation as much as for ecology,
+spanning a 6:1 size range down to a measured legibility floor. See §6 and §8.
 
 ### 4. Alternate between map and water, no minimap
 
@@ -650,6 +650,68 @@ mains; relevant if this ever runs on a cell, and another argument for
 
 ---
 
+## 7c. The ocean, in place — **done**
+
+`ocean.py` + `data/ocean.bin`. 475 kB of uint8 in flash: twelve monthly steps
+of sea surface temperature and mixed layer depth, four seasonal steps of
+nitrate, and two static fields, on a 2° grid.
+
+**2°, not the 5° the plan assumed.** Five degrees is right for temperature and
+wrong for nutrients, which is the field with all the structure and the only one
+the piece is really about. Measured, surface nitrate in austral winter, mmol/m³:
+
+| | 1° | 2° | 3° | 5° |
+|---|---|---|---|---|
+| Peru 15°S | 9.2 | 9.2 | 9.7 | 9.0 |
+| Benguela | 6.9 | 6.1 | 7.0 | **3.8** |
+| Equatorial Pacific | 5.1 | 4.8 | 4.3 | **3.5** |
+| S Pacific gyre | 0.0 | 0.0 | 0.0 | 0.1 |
+
+Five degrees loses nearly half the Benguela, because an eastern-boundary
+upwelling is a 100 km strip and a 550 km cell averages it with 450 km of ocean
+that is not upwelling. 475 kB out of four megabytes is not a real cost.
+
+**Two fields are computed rather than downloaded.** `shelf` is distance to the
+coastline, taken from the same Natural Earth data the map already uses — a
+469 MB bathymetry download to answer "is this coastal" would be absurd when the
+answer is already in `data/coast.bin`. It also carries the iron, since shelf
+sediment and continental dust are where iron comes from, which is why the
+Southern Ocean blooms downstream of South Georgia and nowhere else. `iron` is
+the three hand-drawn HNLC boxes, as planned.
+
+**Three things went wrong, all worth recording:**
+
+- **Coverage gaps read as land.** WOA nutrients are ship casts, not satellite,
+  so there are ocean cells with no nitrate — and quantised naively they became
+  the land sentinel, which the reader cannot distinguish from "not ocean". The
+  track plot had a hole in the nitrate exactly where Drake rounded the Horn.
+  Every field is now nearest-neighbour filled over the ocean mask before
+  quantising. Zero missing days in 1,019.
+- **The iron shelf term was far too generous.** At a 400 km e-folding the Drake
+  Passage came out at an iron ceiling of 0.63 — comfortably enough to bloom, in
+  the stretch of water most famous for not blooming. 180 km fixes it.
+- **The gyres bloomed.** `K_S` was 0.45, under half the published value for a
+  large diatom (1.25 mmol/m³, Litchman 2006) and low enough that a subtropical
+  gyre saturated it; and the deep-nitrate floor of 2.0 was two orders above real
+  gyre surface nitrate. With `K_S = 1.2` and a floor of 0.3 the contrast appears:
+  **gyre biomass 4, Humboldt 46.** Emergent, not prescribed.
+
+The result is in `docs/upwelling_vs_gyre.png` and it does something better than
+the contrast: **the gyre carries more taxa than the upwelling** — 6 against 3 —
+which is exactly what Barton et al. and Follows & Dutkiewicz report, and which
+nothing in the model was told to do.
+
+**What is still wrong**, and belongs to Stage 4 rather than to more tuning: the
+warm oligotrophic tropics — the Coral Triangle, the Panama Bight — are still too
+productive. Temperature roughly triples the growth rate at 30 °C, which is
+correct (it is under the Eppley envelope), and a single implicit species has no
+way to express that the organisms which can exploit that warmth in nutrient-poor
+water are *small* ones with low half-saturation. That is precisely what the trait
+table is for. Tuning it further now would be fitting one species to a job that
+needs sixteen.
+
+---
+
 ## 8. Morphology roster
 
 Sixteen types. Chosen for silhouette separation at ~20 px as much as for ecology,
@@ -658,7 +720,27 @@ because two organisms that read the same are one organism and a waste of flash.
 **Keep (7, already built):** radiolarian, *Coscinodiscus*, *Navicula*,
 *Chaetoceros* chain, *Ceratium*, copepod, tintinnid.
 
-**Add (9):**
+### Size, and how small a cell can be
+
+Measured rather than guessed, by rendering each morphology at descending radii
+and counting ink. **Below r ≈ 3.0 every one of them collapses into a blob** —
+the radiolarian loses its spines, the centric loses its central pore, the
+tintinnid stops being a cone. At r = 3.0 all seven survive, and a radial form is
+about 7 px across.
+
+Marine snow is 1–2 px. So there is a clean **threefold gap** between the
+smallest legible organism and the largest speck, which is what keeps them two
+categories rather than a continuum. `R_MIN = 3.0` is now a hard floor in
+`visual_radius`, applied before the fade so an arriving cell still grows into
+place.
+
+That answers the question of whether smaller cells are possible: **yes, down to
+about 7 px across, and no further.** It also says which of the new organisms can
+be small ones — a coccolithophore at 5–8 px sits exactly on the floor and is
+still unmistakable, because its tell is a scalloped edge rather than an internal
+structure that has to be resolved.
+
+**Add (9), plus 3 small forms):**
 
 | Organism | Geometry, for the drawing function | Water |
 |---|---|---|
@@ -671,6 +753,21 @@ because two organisms that read the same are one organism and a waste of flash.
 | **Ornithocercus** | small body (25–35% of the structure) engulfed by two enormous fenestrated sails with 5–10 radial ribs each, total 2–3× body diameter. The most ornate, most asymmetric outline available. | warm gyre |
 | **Krill** | aspect 5–6:1, 6 abdominal segments, tail fan 1.5–2× body width, two stalked-eye bumps, short antennae. At 20 px: segmented rod + fan, versus the copepod's teardrop + whip antennae. | Southern Ocean |
 | **Foraminiferan** (*Globigerina*) | 4–5 overlapping circles in a ~90° spiral, each 1.3–1.4× the last, overlapping by 40–50%. Lobed grape-cluster. | gyre |
+
+**And three genuinely small forms**, drawn at or near the r = 3 floor, to widen
+the size range downward as asked. Each is chosen because its identifying feature
+is an *outline* rather than an interior detail, which is the only kind of feature
+that survives at 7 px:
+
+| Organism | Geometry | Water |
+|---|---|---|
+| **Coccolithophore** (*Emiliania*) | listed above; belongs here too. A circle whose edge breaks into 10–14 shallow scallops. At r = 3 the scallops are 1 px notches and still read. | gyre |
+| **Small flagellate** (cryptophyte / *Micromonas* type) | teardrop, aspect 1.6:1, two flagella of 1.5× body length trailing from the narrow end. At r = 3 it is a dot with two hairs — and two hairs is enough to say "alive" rather than "detritus". | everywhere, dominant in gyres |
+| **Thalassiosira** | small centric, cells linked into a straight chain by a single central thread, 3–6 cells. The *thread* is the tell, not the cell: a dotted line of discs reads at any size. | coastal, spring bloom |
+
+Together with `R_MIN`, these take the size range from roughly 4:1 to 6:1 and put
+real organisms at the bottom of it — which matters more for the gyre than the
+upwelling, since small cells are exactly what wins there.
 
 **Deliberately not included**, because they collide with something already in:
 *Noctiluca* (a perfect smooth circle — collides with the coccolithophore, and the
@@ -703,9 +800,9 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 | **0** | ✅ Clean mode, wheel speed control | done, committed | — |
 | **1** | ✅ Track + course-up map | `voyage.py`, `mapview.py`, `data/coast.bin`, committed | — |
 | **2** | ✅ Screen rotation | `screens.py` — Bayer dissolve, GALLERY/EXHIBIT cadences, `m` key. Voyage on one clock with the ecosystem. `--voyage` renders all 1018 days. | done |
-| **3** | Ocean data pipeline | `tools/make_ocean.py`, `data/ocean.bin` (127 kB), `Ocean` class, replacing the latitudinal stopgap. **Deliverable: a plot of SST/MLD/nitrate sampled along the whole track** — before any biology touches it. | ~1 session |
+| **3** | ✅ Ocean data pipeline | `tools/make_ocean.py`, `ocean.py`, `data/ocean.bin` (475 kB at 2°), `tools/plot_track.py` → `docs/ocean_track.png`. Environment wired to it. | done |
 | **4** | Trait refactor | Constants → 16-row trait table. **Same 7 organisms, no new morphology.** Validate against the §6 checklist. This is the risky stage; do it alone. | ~2 sessions |
-| **5** | New morphologies | 9 draw functions, one at a time, each checked at 20 px on the real canvas before the next. Each also needs a name, a three-word role and a `KEY_R` for the key plate. | ~2 sessions |
+| **5** | New morphologies | 12 draw functions (9 large, 3 small), one at a time, each checked at both 20 px **and r = 3** on the real canvas before the next. Each also needs a name, a three-word role and a `KEY_R` for the key plate. | ~2–3 sessions |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |

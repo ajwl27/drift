@@ -88,7 +88,11 @@ W_DET = 9.0                # detritus sinking, m/day
 # biology
 MU_MAX = 1.45              # max phyto division rate, /day
 I_K = 0.095                # light half-saturation (normalised irradiance)
-K_S = 0.45                 # nutrient half-saturation
+K_S = 1.20                 # nutrient half-saturation. Was 0.45, which is
+                           # under half the published value for a large
+                           # diatom (1.25 mmol/m3, Litchman 2006) and, more
+                           # to the point, low enough that a subtropical gyre
+                           # saturated it and bloomed.
 K_WATER = 0.035            # background light attenuation, /m
 K_CHL = 0.055               # extra attenuation per unit biomass (self-shading)
 N_DEEP = 13.0              # deep nutrient reservoir
@@ -331,9 +335,10 @@ class Environment:
     by the real sensor package: a light sensor on the front, and a BME280 for
     temperature and pressure. Until then they are a plausible fiction."""
 
-    def __init__(self, rng, track=None):
+    def __init__(self, rng, track=None, ocean=None):
         self.rng = rng
         self.track = track          # None -> stand still at Melbourn
+        self.ocean = ocean          # None -> the latitudinal stopgap
         self.cloud = 0.5
         self.storm = 0.0
         self.temp_anomaly = 0.0
@@ -342,6 +347,50 @@ class Environment:
         if self.track is None:
             return LAT, LON
         return self.track.position(t_days)
+
+    # -- the real ocean ----------------------------------------------------
+    #
+    # Every one of these falls back to the stopgap when there is no ocean
+    # file, so drift.py still runs standalone and the seasonal-cycle test
+    # still means something.
+
+    def deep_nitrate(self, t_days):
+        """The reservoir below the nutricline, which is what actually sets
+        how productive a patch of ocean can be.
+
+        Derived from WOA surface nitrate rather than used directly: the
+        surface value is what is left after the community has drawn it down,
+        so it understates supply. Scaling it is cruder than carrying a real
+        depth profile and it gets the ordering right, which is what matters.
+
+        The floor matters more than the slope. At a floor of 2.0 the gyres
+        still bloomed, because tropical warmth roughly triples the growth
+        rate and 2 mmol is plenty to feed on. Real gyre surface nitrate is
+        two orders below that. Dropping the floor to 0.3 is what finally
+        makes an oligotrophic gyre behave like one."""
+        if self.ocean is None:
+            return N_DEEP
+        la, lo = self.where(t_days)
+        n = self.ocean.nitrate(la, lo, t_days)
+        if n is None:
+            return N_DEEP
+        return max(0.3, min(30.0, 0.3 + 2.6 * n))
+
+    def iron(self, t_days):
+        """0..1, applied by Liebig against the nitrogen term. This is the one
+        field that has to be here rather than emergent: without it the model
+        draws down the Southern Ocean's twenty-odd micromolar of nitrate and
+        blooms, in the stretch of water most famous for not blooming."""
+        if self.ocean is None:
+            return 1.0
+        la, lo = self.where(t_days)
+        return self.ocean.iron(la, lo)
+
+    def shelf_km(self, t_days):
+        if self.ocean is None:
+            return 200.0
+        la, lo = self.where(t_days)
+        return self.ocean.shelf_km(la, lo)
 
     def hemisphere_doy(self, t_days):
         """Day of year, flipped in the southern hemisphere.
@@ -390,6 +439,14 @@ class Environment:
         return math.sin(elev) * clear
 
     def mixed_layer_depth(self, t_days):
+        if self.ocean is not None:
+            la, lo = self.where(t_days)
+            m = self.ocean.mld(la, lo, t_days)
+            if m is not None:
+                # Clamped to a little beyond the panel's column. Beyond that
+                # the only thing a deeper mixed layer does is saturate the
+                # light-limitation term, which it already has.
+                return min(Z_MAX * 1.6, m) * (1.0 + 0.45 * self.storm)
         doy = self.hemisphere_doy(t_days)
         # deepest around mid-February, shallowest around mid-August
         seasonal = 0.5 + 0.5 * math.cos(2 * math.pi * (doy - 46) / 365.25)
@@ -413,6 +470,16 @@ class Environment:
         return (tide + U_RESID) * shear * (1.0 + 0.5 * self.storm)
 
     def temperature(self, t_days, z):
+        if self.ocean is not None:
+            la, lo = self.where(t_days)
+            sst = self.ocean.sst(la, lo, t_days)
+            if sst is not None:
+                surf = sst + self.temp_anomaly
+                mld = self.mixed_layer_depth(t_days)
+                if z <= mld:
+                    return surf
+                deep = min(surf, 4.0 + 8.0 * math.cos(math.radians(la)))
+                return surf - (surf - deep) * min(1.0, (z - mld) / 40.0)
         doy = self.hemisphere_doy(t_days)
         lat, _ = self.where(t_days)
         # A crude latitudinal gradient standing in for real SST until Stage 3
@@ -764,16 +831,31 @@ class Detritus:
         self.offs = [(rng.gauss(0, 1.7), rng.gauss(0, 1.7)) for _ in range(n)]
 
 
+R_MIN = 3.0
+# Measured, not guessed. Rendering each morphology at descending radii and
+# counting ink: below about 3.0 every one of them collapses into a blob --
+# the radiolarian loses its spines, the centric loses its central pore, the
+# tintinnid stops being a cone. At 3.0 all seven are still structured, and a
+# radial form is about 7 px across. Marine snow is 1 to 2 px, so there is a
+# clean threefold gap between the smallest organism and the largest speck,
+# which is what keeps them separate categories rather than a continuum.
+
+
 def visual_radius(a):
     """Single source of truth for on-screen size, used by both the renderer
-    and the separation force so the two cannot disagree."""
-    return a.g.size * (0.30 + 0.70 * min(1.6, a.mass) / 1.6) * a.vis
+    and the separation force so the two cannot disagree.
+
+    The floor is applied before the fade, not after: a fully arrived cell is
+    never drawn below the legibility threshold, but one that is still fading
+    in still grows into place rather than popping."""
+    r = a.g.size * (0.30 + 0.70 * min(1.6, a.mass) / 1.6)
+    return max(R_MIN, r) * a.vis
 
 
 class Ecosystem:
-    def __init__(self, seed=None, start_day=0.0, track=None):
+    def __init__(self, seed=None, start_day=0.0, track=None, ocean=None):
         self.rng = random.Random(seed)
-        self.env = Environment(self.rng, track)
+        self.env = Environment(self.rng, track, ocean)
         self.track = track
         self.t = start_day
         r = self.rng
@@ -839,6 +921,9 @@ class Ecosystem:
 
     # -- biogeochemistry ---------------------------------------------------
 
+    _deep_n = N_DEEP
+    _iron = 1.0
+
     def _mix_nitrogen(self, dt, mld, mixing):
         nb = max(1, min(NBINS, int(mld / BIN_M) + 1))
         f = min(1.0, mixing * 2.4 * dt)
@@ -851,10 +936,11 @@ class Ecosystem:
             prev = pool[:]
             for i in range(1, NBINS - 1):
                 pool[i] = prev[i] + kd * (prev[i - 1] - 2 * prev[i] + prev[i + 1])
-        self.no3[NBINS - 1] += (N_DEEP - self.no3[NBINS - 1]) * min(1.0, 0.7 * dt)
+        deep = self._deep_n
+        self.no3[NBINS - 1] += (deep - self.no3[NBINS - 1]) * min(1.0, 0.7 * dt)
         for i in range(NBINS):
-            self.no3[i] = max(0.01, min(N_DEEP * 1.3, self.no3[i]))
-            self.nh4[i] = max(0.0, min(N_DEEP * 0.6, self.nh4[i]))
+            self.no3[i] = max(0.01, min(deep * 1.3, self.no3[i]))
+            self.nh4[i] = max(0.0, min(deep * 0.6, self.nh4[i]))
 
     def _nitrify(self, dt, surface, chl):
         """Chemoautotrophy. These organisms take no light at all -- they run
@@ -925,6 +1011,8 @@ class Ecosystem:
         t = self.t
 
         surface = env.surface_light(t)
+        self._deep_n = env.deep_nitrate(t)
+        self._iron = env.iron(t)
         mld = env.mixed_layer_depth(t)
         mixing = env.mixing(t)
         chl = self.biomass / MAX_PHYTO
@@ -984,7 +1072,10 @@ class Ecosystem:
             # suppresses nitrate uptake
             f_nh4 = nh4 / (nh4 + K_S)
             f_no3 = (no3 / (no3 + K_S)) * math.exp(-PSI * nh4)
-            f_nut = min(1.0, f_nh4 + f_no3)
+            # Liebig: whichever of nitrogen and iron is scarcer sets the
+            # ceiling. In an HNLC region nitrogen is abundant and this term is
+            # entirely iron, which is the whole point of carrying the field.
+            f_nut = min(1.0, f_nh4 + f_no3, self._iron)
             f_temp = 1.8 ** ((env.temperature(t, a.z) - 11.0) / 10.0)
 
             ingested = 0.0
@@ -1423,11 +1514,13 @@ def preview():
 
     from voyage import Track
     from mapview import Coast
+    from ocean import Ocean
     from screens import Rotation, Compositor, GALLERY
 
     track = Track()
     coast = Coast("data/coast.bin")
-    eco = Ecosystem(seed=None, start_day=0.0, track=track)
+    ocean = Ocean("data/ocean.bin")
+    eco = Ecosystem(seed=None, start_day=0.0, track=track, ocean=ocean)
     canvas = Canvas(W, H)
     view = View()
     rot = Rotation(GALLERY)
@@ -1470,7 +1563,8 @@ def preview():
                 elif e.key == pygame.K_m:
                     rot.skip()
                 elif e.key == pygame.K_r:
-                    eco = Ecosystem(seed=None, start_day=eco.t, track=track)
+                    eco = Ecosystem(seed=None, start_day=eco.t, track=track,
+                                    ocean=ocean)
                 elif e.key == pygame.K_s:
                     to_pil(canvas).resize((W * 4, H * 4), 0).save(
                         "drift_%03d.png" % shot)
@@ -1493,7 +1587,8 @@ def preview():
             # the same ocean grows a different community -- one line, and it
             # is the difference between a loop and a repeat.
             if eco.t >= track.days[-1]:
-                eco = Ecosystem(seed=None, start_day=0.0, track=track)
+                eco = Ecosystem(seed=None, start_day=0.0, track=track,
+                                ocean=ocean)
             rot.advance(real_dt)
 
         toast = max(0.0, toast - real_dt)
@@ -1527,11 +1622,17 @@ def voyage_sweep(outdir, every=30, seed=7):
     written at the end when it is too late to change anything."""
     import os
     from voyage import Track
+    from ocean import Ocean
     from PIL import Image
 
     os.makedirs(outdir, exist_ok=True)
     track = Track()
-    eco = Ecosystem(seed=seed, start_day=0.0, track=track)
+    try:
+        ocean = Ocean("data/ocean.bin")
+    except (IOError, OSError):
+        ocean = None
+        print("no data/ocean.bin -- running on the latitudinal stopgap")
+    eco = Ecosystem(seed=seed, start_day=0.0, track=track, ocean=ocean)
     canvas = Canvas(W, H)
     view = View(hud=False)
     total = track.days[-1]
@@ -1545,8 +1646,10 @@ def voyage_sweep(outdir, every=30, seed=7):
             tiles.append(to_pil(canvas))
             la, lo = track.position(eco.t)
             log.append((int(eco.t), la, lo, eco.env.temperature(eco.t, 2.0),
-                        eco.env.mixed_layer_depth(eco.t), eco.biomass,
-                        len(eco.agents), eco.n_zoo, track.status(eco.t)))
+                        eco.env.mixed_layer_depth(eco.t),
+                        eco.env.deep_nitrate(eco.t), eco.env.iron(eco.t),
+                        eco.biomass, len(eco.agents), eco.n_zoo,
+                        track.status(eco.t)))
             nxt += every
 
     cols = 9
@@ -1559,12 +1662,12 @@ def voyage_sweep(outdir, every=30, seed=7):
     sheet.save(path)
 
     with open(os.path.join(outdir, "voyage.csv"), "w") as f:
-        f.write("day,lat,lon,sst,mld,biomass,agents,zoo,status\n")
+        f.write("day,lat,lon,sst,mld,deepN,iron,biomass,agents,zoo,status\n")
         for r in log:
-            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%d,%d,%s\n" % r)
+            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%.2f,%.1f,%d,%d,%s\n" % r)
 
-    bio = [r[5] for r in log]
-    n = [r[6] for r in log]
+    bio = [r[7] for r in log]
+    n = [r[8] for r in log]
     print("%s  %d panels" % (path, len(tiles)))
     print("biomass  min %5.1f  median %5.1f  max %5.1f"
           % (min(bio), sorted(bio)[len(bio) // 2], max(bio)))

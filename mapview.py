@@ -227,11 +227,29 @@ def draw_caption(c, track, day, w=W, h=H):
     text(c, 12, h - 16, st[:36])
 
 
+# North stays up.
+#
+# The original argument for course-up was that it makes a portrait panel the
+# right shape: a voyage wants to show ahead and behind more than the water
+# either side, and Drake's track is mostly north-south down the Atlantic and
+# up the Americas. That argument is still true, and it is still not worth it.
+# Course-up means the world rotates under you, so the same coastline arrives
+# at a different angle every time and you have to re-read the map from
+# scratch on every appearance. North-up is the convention for a reason: the
+# shape of South America becomes something you recognise instead of something
+# you decode. The panel is a little less efficiently filled and the map is a
+# great deal more legible, and legibility wins on a screen you glance at.
+#
+# Camera keeps the rotation -- it is two multiplies and it costs nothing to
+# leave in -- so this is one constant to flip if it ever wants revisiting.
+NORTH_UP = True
+
+
 def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):
     """One frame of the map interlude."""
     canvas.clear()
     la, lo = track.position(day)
-    cam = Camera(la, lo, track.bearing(day), R)
+    cam = Camera(la, lo, 0.0 if NORTH_UP else track.bearing(day), R)
     if chrome:
         draw_graticule(canvas, cam, w, h)
     coast.draw(canvas, cam, w, h)
