@@ -41,10 +41,13 @@ minutes.
 |---|---|
 | `drift.py` | the ecosystem and the renderer. `Canvas` is the only part rewritten in C on the port; everything above it ports unchanged. |
 | `voyage.py` | Drake's circumnavigation as 62 dated waypoints, great-circle interpolated. Pure functions of a day number. |
-| `mapview.py` | course-up orthographic on a portrait panel. |
+| `mapview.py` | orthographic chart, north up. |
 | `keyplate.py` | the key plate: a live census of what is in the water, plus voyage progress. |
 | `screens.py` | the rotation between the three screens, and the dissolve between them. |
+| `ocean.py` | real climatology, sampled by position and month. |
 | `tools/make_coast.py` | Natural Earth shapefile → the packed coastline in `data/`. |
+| `tools/make_ocean.py` | WOA23 / OISST / Ifremer netCDF → the packed ocean in `data/`. |
+| `tools/plot_track.py` | the ocean along the whole voyage, as a diagnostic plot. |
 | `plan.md` | where this is going. |
 
 ## Data
@@ -52,3 +55,18 @@ minutes.
 `data/coast.bin` — Natural Earth 1:50m coastline, Douglas-Peucker at 0.1°,
 split at the antimeridian, int16 centidegrees. 14,447 points in 59 kB.
 Natural Earth is public domain.
+
+`data/ocean.bin` — 2° global grid, uint8, 475 kB. Sea surface temperature and
+mixed layer depth at twelve monthly steps, nitrate at four seasonal steps,
+distance-to-coast and an iron ceiling as static fields.
+
+| field | source | licence |
+|---|---|---|
+| SST | [NOAA OISST v2.1](https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/) 1991–2020 climatology | public domain |
+| mixed layer depth | [Ifremer / de Boyer Montégut 2024](https://www.seanoe.org/data/00870/98226/) | CC-BY-4.0 |
+| nitrate | [World Ocean Atlas 2023](https://www.ncei.noaa.gov/access/world-ocean-atlas-2023/), seasonal, all years | public domain |
+| distance to coast | computed from `coast.bin` | — |
+| iron | three hand-drawn HNLC boxes | — |
+
+Rebuild it by downloading those three into a scratch directory and running
+`python3 tools/make_ocean.py <dir> data/ocean.bin`.
