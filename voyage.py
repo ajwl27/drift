@@ -234,6 +234,19 @@ class Track:
         i, _ = self._seg(day)
         return self.wp[i][4], self.wp[min(i + 1, len(self.wp) - 1)][4]
 
+    def next_port(self, day):
+        """(name, days away) for the next waypoint the ship is not already
+        sitting at. Skips the duplicate entries that encode a dwell, so at
+        Port St Julian on day 200 this says CAPE VIRGENES in 50 days rather
+        than PORT ST JULIAN in 47."""
+        i, _ = self._seg(day)
+        here = (self.wp[i][1], self.wp[i][2])
+        for j in range(i + 1, len(self.wp)):
+            w = self.wp[j]
+            if (w[1], w[2]) != here:
+                return w[4], w[0] - day
+        return self.wp[-1][4], self.wp[-1][0] - day
+
     def confidence(self, day):
         """Lowest confidence of the two waypoints bracketing this moment.
         The plate says so when it is guessing."""

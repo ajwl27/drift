@@ -465,6 +465,84 @@ worth seeing before committing. The rendered comparison is in `docs/map_clean.pn
 
 ---
 
+## 7b. The third screen — the key plate — **prototype in the repo**
+
+`keyplate.py`, working. See `docs/three_screens.png`.
+
+This solves a problem the other two screens cannot. Water and map are both
+beautiful and both mute: a person who walks into the room has no way in. Every
+natural-history plate ever printed has a key, and that is exactly the idiom —
+so the third screen is the plate's key, and it makes the object legible without
+making it a gadget.
+
+The important design choice: **it lists only what is actually in the water right
+now, sorted by abundance.** That makes it a census rather than a legend. It
+changes as the ship sails, and watching the list turn over between Callao and
+mid-Pacific is probably the clearest single statement the piece makes.
+
+Each row carries: a drawn specimen, the name, a three-word role
+(`DIATOM CHAINS`, `GRAZER MIGRATES`) so the ecology arrives without a lecture, a
+bar for share of biomass, and a count. Bar and count answer different questions
+and diverge sharply during a bloom of small cells, which is itself informative.
+
+Above the list, the voyage block you asked for: position in degrees and minutes,
+time at sea, time remaining, and **next port with days to run** — which is the
+line people will actually look at. Plus a progress bar for the whole voyage with
+a tick at every anchorage, so the *shape* of the voyage is visible at a glance:
+long empty runs, then clusters of stops.
+
+Two implementation notes worth recording, both learned by getting them wrong:
+
+- Specimens need a **hand-set drawing radius per type**, not one derived from
+  `EXTENT`. `EXTENT` is an isotropic separation radius; a *Chaetoceros* chain is
+  compact across its axis and up to twelve radii long down it, so at a shared
+  nominal size it sprawls straight across the name beside it.
+- Seed each specimen's genome from its **row index**, not the RNG, or the
+  drawings shimmer between frames.
+
+At 34 px per row the plate holds **8 organisms** above the voyage block, which
+comfortably covers the 5–7 types typically present. In clean mode the voyage
+block and footer drop away and it becomes a bare list of drawn organisms and
+names — arguably the nicest of the three clean screens.
+
+### Cadence — with one honest reservation
+
+Your proposal: `10 s map → 20 s water → 10 s key → 20 s water`, a 60-second loop.
+
+That is **33% of the time not showing water.** It is the right cadence for a
+room with people in it — a visitor arriving at random will see the map or the
+key within half a minute and understand the object immediately. It is probably
+the wrong cadence for the thing sitting on your shelf for two years and ten
+months, where the interruption arrives 1,440 times a day and the aquarium
+becomes a slideshow.
+
+So: **make it two named cadences and let the button choose.**
+
+| | Water | Map | Key | Chrome |
+|---|---|---|---|---|
+| `GALLERY` (default) | 20 min | 20 s | 15 s | ~3% |
+| `EXHIBIT` (yours) | 20 s | 10 s | 10 s | 33% |
+
+The button (`m` in the preview, KEY on the panel) does the obvious thing: one
+press advances to the next screen immediately; **a press also drops the piece
+into `EXHIBIT` for five minutes and then it quietly returns to `GALLERY`.** So
+the object is contemplative by default and becomes explicable the moment someone
+asks about it — which is precisely the situation you described with parents in
+the room.
+
+Ordering within the loop matters more than it looks. `map → water → key → water`
+is right: map and key are both "information" screens and should never be
+adjacent, or the piece has a long chrome stretch and then a long water stretch
+instead of alternating.
+
+One cost to note: the ST7305 draws ~40 µA at 1 Hz and ~5 mA at 51 Hz, and
+dissolves need the fast rate. `EXHIBIT` spends roughly 13% of its time
+transitioning, so it is meaningfully more expensive than `GALLERY`. Irrelevant on
+mains; relevant if this ever runs on a cell, and another argument for
+`EXHIBIT` being a temporary mode rather than the default.
+
+---
+
 ## 8. Morphology roster
 
 Sixteen types. Chosen for silhouette separation at ~20 px as much as for ecology,
@@ -517,10 +595,10 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 |---|---|---|---|
 | **0** | ✅ Clean mode, wheel speed control | done, committed | — |
 | **1** | ✅ Track + course-up map | `voyage.py`, `mapview.py`, `data/coast.bin`, committed | — |
-| **2** | Map interlude | Bayer dissolve, scheduler, event triggers, `m` key. Watchable end to end at 1 day/sec. | ~1 session |
+| **2** | Screen rotation | Bayer dissolve, the GALLERY/EXHIBIT cadences, event triggers, `m` key. Key plate is prototyped (`keyplate.py`) and needs wiring in. Watchable end to end at 1 day/sec. | ~1 session |
 | **3** | Ocean data pipeline | `tools/make_ocean.py`, `data/ocean.bin` (127 kB), `Ocean` class. **Deliverable: a plot of SST/MLD/nitrate sampled along the whole track** — before any biology touches it. | ~1 session |
 | **4** | Trait refactor | Constants → 16-row trait table. **Same 7 organisms, no new morphology.** Validate against the §6 checklist. This is the risky stage; do it alone. | ~2 sessions |
-| **5** | New morphologies | 9 draw functions, one at a time, each checked at 20 px on the real canvas before the next. | ~2 sessions |
+| **5** | New morphologies | 9 draw functions, one at a time, each checked at 20 px on the real canvas before the next. Each also needs a name, a three-word role and a `KEY_R` for the key plate. | ~2 sessions |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |
@@ -551,10 +629,12 @@ Ranked by probability × damage.
    that two read the same at 20 px. Mitigation: the "deliberately not included"
    list above already dropped five candidates for exactly this reason, and each new
    draw function gets checked at final resolution before the next one starts.
-3. **The map feels like an interruption.** Twenty seconds every twenty minutes is
-   1.7% of the time — but if it lands wrong it will be the only thing anyone
-   notices. Mitigation: event triggers so it appears when there is something to
-   see, never during a bloom, and a slow dissolve rather than a cut.
+3. **The chrome screens feel like an interruption.** At `GALLERY` pace it is ~3%
+   of the time; at `EXHIBIT` pace, 33%. If it lands wrong it will be the only
+   thing anyone notices. Mitigation: `GALLERY` as the default, `EXHIBIT` as a
+   five-minute mode behind the button, event triggers so the map appears when
+   there is something to see, never during a bloom, and a slow dissolve rather
+   than a cut.
 4. **The Pacific.** Nine weeks of the emptiest water on Earth on an invented
    track. Mitigation: §1. Test it *first* in Stage 6 — jump straight to day 610 and
    look at it before reviewing anything else.

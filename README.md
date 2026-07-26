@@ -29,6 +29,7 @@ Headless stills, no pygame needed: `python3 drift.py --stills out/`
 | `drift.py` | the ecosystem and the renderer. `Canvas` is the only part rewritten in C on the port; everything above it ports unchanged. |
 | `voyage.py` | Drake's circumnavigation as 62 dated waypoints, great-circle interpolated. Pure functions of a day number. |
 | `mapview.py` | course-up orthographic on a portrait panel. |
+| `keyplate.py` | the key plate: a live census of what is in the water, plus voyage progress. |
 | `tools/make_coast.py` | Natural Earth shapefile → the packed coastline in `data/`. |
 | `plan.md` | where this is going. |
 
