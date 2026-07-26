@@ -25,7 +25,7 @@ Keys:
     1 2 3 4 5   speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per sec
     c           CLEAN MODE -- organisms and snow only, all chrome hidden
     h           toggle HUD
-    p           toggle plate furniture (border, depth scale, caption)
+    p           toggle the footer (name, position, voyage progress)
     n           toggle the chemoautotroph stipple
     s           save a PNG
     r           reseed the world
@@ -1026,7 +1026,8 @@ class Ecosystem:
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
-TOP_M, BOT_M = 9, 26          # plate margins, pixels
+TOP_M, BOT_M = 4, 18          # margins. Were 9/26 when there was a border
+                              # to clear; the footer is all that is left.
 
 
 def depth_to_y(z):
@@ -1093,7 +1094,7 @@ def _stipple_points():
 DEFAULT_VIEW = View()
 
 
-def render(eco, canvas, view=DEFAULT_VIEW):
+def render(eco, canvas, view=DEFAULT_VIEW, track=None, day=None):
     canvas.clear()
     zpx = (H - TOP_M - BOT_M) / Z_MAX
 
@@ -1138,34 +1139,42 @@ def render(eco, canvas, view=DEFAULT_VIEW):
                 canvas.circle(xx, y, r * 1.9)
 
     if view.plate:
-        draw_plate(eco, canvas)
+        draw_plate(eco, canvas, track, day)
     if view.hud:
         draw_hud(eco, canvas)
 
 
-def draw_plate(eco, c):
-    """Furniture that makes it read as a printed plate rather than a screen."""
-    c.rect(3, 3, W - 4, H - 4)
-    c.rect(6, 6, W - 7, H - 22)
+def draw_plate(eco, c, track=None, day=None):
+    """The footer, and nothing else.
 
-    for m in range(0, int(Z_MAX) + 1, 5):
-        y = int(depth_to_y(m))
-        major = (m % 20 == 0)
-        c.line(7, y, 11 if major else 9, y)
-        if major and m > 0:
-            text(c, 13, y - 2, str(m))
+    This used to be a full plate -- double border, depth scale with numbered
+    ticks, a tide staff. All of it went. The borderless views turned out to
+    look better than the framed one, and once the border is gone the depth
+    scale has nothing to sit against and reads as clutter. What survives is
+    the three things you actually want to know: what this is, where it is,
+    and how far through.
 
-    # tide staff: a small mark on the right margin tracking the current
-    u = eco.env.current(eco.t, 0.0)
-    ty = int(H * 0.5 - u * 0.055)
-    ty = max(TOP_M + 4, min(H - BOT_M - 4, ty))
-    c.line(W - 11, H // 2, W - 8, H // 2)
-    c.line(W - 10, ty, W - 8, ty)
+    The progress bar is a hairline with a single tick, because the number of
+    days is not interesting and the proportion is."""
+    y = H - 13
+    text(c, 8, y, "DRIFT")
 
-    text(c, 8, H - 15, date_label(eco.t))
-    lat_s = "%02d%s%02d'N" % (int(LAT), "\xb0", int((LAT % 1) * 60))
-    label = lat_s + "  DRIFT"
-    text(c, W - 9 - text_width(label), H - 15, label)
+    if track is not None and day is not None:
+        la, lo = track.position(day)
+        pos = "%02d%s%02d'%s  %03d%s%02d'%s" % (
+            abs(int(la)), "\xb0", int(abs(la) % 1 * 60), "N" if la >= 0 else "S",
+            abs(int(lo)), "\xb0", int(abs(lo) % 1 * 60), "E" if lo >= 0 else "W")
+        text(c, W - 8 - text_width(pos), y, pos)
+        f = day / track.days[-1]
+    else:
+        # standing at Melbourn, no voyage: fall back to the date
+        text(c, W - 8 - text_width(date_label(eco.t)), y, date_label(eco.t))
+        f = (eco.t % 365.25) / 365.25
+
+    by = H - 5
+    c.line(8, by, W - 9, by)
+    x = 8 + (W - 17) * f
+    c.line(x, by - 3, x, by + 1)
 
 
 def draw_hud(eco, c):

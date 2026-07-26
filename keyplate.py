@@ -46,6 +46,7 @@ ROLES = {
 ROW_H = 34
 SPEC_X = 24          # centre of the specimen column
 TEXT_X = 56
+NUM_W = 16           # right-hand column, four characters of abundance
 
 # Drawing radius per type for the key column, hand-set rather than derived.
 # EXTENT is a separation radius and is deliberately isotropic, so it does not
@@ -71,17 +72,79 @@ def _specimen(c, kind, cx, cy, seed=1):
         DRAW[kind](c, cx, cy, r, -0.35, g)
 
 
+# --------------------------------------------------------------------------
+# abundance, on one absolute scale
+# --------------------------------------------------------------------------
+#
+# The number of individuals drawn in the water is a rendering decision, not
+# an ecological one -- the count is compressed so that an oligotrophic gyre
+# is watchable rather than blank.  That compression is right for the water
+# and wrong for a key.  So the key plate reports what the *model* believes,
+# not what the renderer drew, and the honest ecology lives here.
+#
+# The scale: 1 is the scarcest any drawn organism ever gets, anywhere on the
+# voyage, while still being present at all.  Everything else is a multiple of
+# that.  So 250 beside Chaetoceros means there is 250 times more Chaetoceros
+# in this water than there is of the rarest organism at the place it is
+# rarest -- one yardstick, good across every species and every day of the
+# three years.
+#
+# A_REF is *measured*, not chosen: Stage 6 runs the whole 1018 days and logs
+# per-type abundance daily, and A_REF is the smallest 7-day mean any type
+# reaches while present.  A rolling mean rather than an instantaneous
+# minimum, because a single straggler on one afternoon is noise, and "the
+# place it is rarest" should be a place rather than a moment.  The measured
+# value is then baked into flash as a constant.
+
+A_REF = 0.42          # PLACEHOLDER. Stands in until Stage 6 measures it.
+A_MAX = 10000.0       # top of the log bar. Also confirmed in Stage 6.
+
+
 def census(eco):
-    """[(kind, count, biomass), ...] sorted by biomass, present types only."""
+    """[(kind, count, biomass, x), ...] sorted by abundance, present types
+    only. `x` is abundance on the A_REF scale."""
     tally = {}
     for a in eco.agents:
         if a.vis <= 0.03:
             continue
         n, m = tally.get(a.g.kind, (0, 0.0))
         tally[a.g.kind] = (n + 1, m + a.mass)
-    rows = [(k, v[0], v[1]) for k, v in tally.items()]
-    rows.sort(key=lambda r: -r[2])
+    rows = [(k, v[0], v[1], v[1] / A_REF) for k, v in tally.items()]
+    rows.sort(key=lambda r: -r[3])
     return rows
+
+
+def abundance_label(x):
+    """Four characters at most, because that is what the column is worth.
+    Below 10 it is worth a decimal; above 999 nobody cares about the units."""
+    if x < 9.95:
+        return ("%.1f" % x).rstrip("0").rstrip(".")
+    if x < 999.5:
+        return "%d" % int(round(x))
+    if x < 99500:
+        return "%dK" % int(round(x / 1000.0))
+    return ">99K"
+
+
+def abundance_bar(c, x0, y, wpx, x):
+    """Log scale, with a tick at each decade.
+
+    Linear would be useless: the range across the voyage is three or four
+    orders of magnitude, so on a linear bar everything except the current
+    winner is a single pixel. The decade ticks are what stop a log scale from
+    being mysterious -- you can see that a bar reaching the second tick means
+    a hundredfold, without being told."""
+    c.line(x0, y, x0 + wpx, y)
+    dec = math.log10(A_MAX)
+    k = 1
+    while k <= dec + 0.001:
+        tx = x0 + wpx * (k / dec)
+        c.line(tx, y - 2, tx, y)
+        k += 1
+    f = max(0.0, min(1.0, math.log10(max(x, 1.0)) / dec))
+    c.line(x0, y + 2, x0 + max(1.0, wpx * f), y + 2)
+    c.line(x0, y + 1, x0, y + 3)
+    c.line(x0 + max(1.0, wpx * f), y + 1, x0 + max(1.0, wpx * f), y + 3)
 
 
 def _hms_days(d):
@@ -132,27 +195,25 @@ def render_key(canvas, eco, track, day, chrome=True, w=W, h=H):
     y = draw_progress(canvas, track, day) if chrome else 10
 
     rows = census(eco)
-    total = sum(r[2] for r in rows) or 1.0
     canvas.line(10, y, w - 11, y)
-    y += 6
+    y += 4
+    if chrome:
+        text(canvas, TEXT_X, y, "ABUNDANCE X SCARCEST")
+        y += 8
 
-    max_rows = (h - y - 14) // ROW_H
-    for i, (kind, n, mass) in enumerate(rows[:max_rows]):
+    bar_w = w - 11 - NUM_W - 4 - TEXT_X
+    max_rows = int((h - y - 14) // ROW_H)
+    for i, (kind, n, mass, x) in enumerate(rows[:max_rows]):
         cy = y + ROW_H // 2
         _specimen(canvas, kind, SPEC_X, cy, seed=i + 1)
         text(canvas, TEXT_X, cy - 11, NAMES.get(kind, "?"))
         text(canvas, TEXT_X, cy - 3, ROLES.get(kind, ""))
-        # share of biomass as a bar, count as a number. Two different
-        # questions -- how much of the water is this, and how many are there
-        # -- and for a bloom of small cells the answers diverge sharply.
-        bw = int((w - 22 - TEXT_X) * (mass / total))
-        canvas.line(TEXT_X, cy + 8, TEXT_X + max(1, bw), cy + 8)
-        cnt = "%d" % n
-        text(canvas, w - 11 - text_width(cnt), cy + 6, cnt)
+        abundance_bar(canvas, TEXT_X, cy + 8, bar_w, x)
+        lab = abundance_label(x)
+        text(canvas, w - 11 - text_width(lab), cy + 6, lab)
         y += ROW_H
 
     if chrome and len(rows) > max_rows:
         text(canvas, 10, h - 12, "AND %d MORE" % (len(rows) - max_rows))
     elif chrome:
-        text(canvas, 10, h - 12, "%d TAXA  %d INDIVIDUALS"
-             % (len(rows), sum(r[1] for r in rows)))
+        text(canvas, 10, h - 12, "%d TAXA" % len(rows))

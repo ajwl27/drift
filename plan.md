@@ -88,6 +88,26 @@ a decision rather than a bug:
 - Depth axis rescales with the local mixed layer (see §5), which no real plate
   would do.
 
+### 1b. The room sensors are out — **decided**
+
+The original concept coupled the ecosystem to the room: a light sensor for cloud
+cover, a BME280 for temperature and pressure. The voyage replaces all three with
+a real ocean, and two forcings driving the same model would have fought each
+other — a bright afternoon in a Cambridgeshire office has no business overruling
+the Humboldt Current.
+
+Consequences, all good: the BOM loses the sensor package; `Environment.cloud`,
+`storm` and `temp_anomaly` stop being a random walk and become either real
+climatology or a seeded pseudo-weather deterministic in day number; and the
+piece becomes fully reproducible, so day 429 of every voyage has the same
+weather. That last one matters more than it sounds — it means the whole 1018
+days can be rendered offline for review, which is what Stage 6 needs.
+
+What is lost is the piece's connection to the room. That was a real virtue and
+it is worth naming rather than quietly dropping. The voyage buys something
+better in its place: the object is no longer about *here*, it is about
+*elsewhere*, which is a stronger idea for something you look at from a desk.
+
 ### 2. It has to run on the hardware
 
 Confirmed targets: **RP2350** (dual Cortex-M33, hardware single-precision FPU,
@@ -465,6 +485,26 @@ worth seeing before committing. The rendered comparison is in `docs/map_clean.pn
 
 ---
 
+## 7a. The water view — stripped — **done**
+
+The double border, the numbered depth scale and the tide staff are gone. The
+borderless renders read better than the framed ones, and once the border goes
+the depth scale has nothing to sit against and becomes clutter.
+
+What survives is a single footer line and a hairline:
+
+```
+DRIFT                              12°03'S  077°09'W
+──────────────────────┴─────────────────────────────
+```
+
+Name, position, and the voyage as a bar with one tick. The bar rather than a day
+count, because *how far through* is the interesting quantity and *day 429* is
+not. `TOP_M`/`BOT_M` drop from 9/26 to 4/18, so the water column also gains
+13 px of height — the strip that used to be border.
+
+`c` still takes even this away.
+
 ## 7b. The third screen — the key plate — **prototype in the repo**
 
 `keyplate.py`, working. See `docs/three_screens.png`.
@@ -481,9 +521,47 @@ changes as the ship sails, and watching the list turn over between Callao and
 mid-Pacific is probably the clearest single statement the piece makes.
 
 Each row carries: a drawn specimen, the name, a three-word role
-(`DIATOM CHAINS`, `GRAZER MIGRATES`) so the ecology arrives without a lecture, a
-bar for share of biomass, and a count. Bar and count answer different questions
-and diverge sharply during a bloom of small cells, which is itself informative.
+(`DIATOM CHAINS`, `GRAZER MIGRATES`) so the ecology arrives without a lecture,
+and abundance on one absolute scale.
+
+### The abundance scale — and where the honest ecology went
+
+The number of individuals drawn in the water is a **rendering** decision, not an
+ecological one: §1 compresses the count so a gyre is watchable rather than blank.
+That compression is right for the water and wrong for a key.
+
+So the key plate reports what the **model** believes, not what the renderer drew
+— and that resolves the tension in §1 completely. The water view is allowed to
+compress, because the honest numbers are one screen away. We never have to lie;
+we just put the truth on the screen designed to carry it.
+
+**The scale, as you described it:** 1 is the scarcest any drawn organism ever
+gets, anywhere on the voyage, while still being present at all. Everything else
+is a multiple. `93` beside *Chaetoceros* means there is ninety-three times more
+*Chaetoceros* in this water than there is of the rarest organism at the place it
+is rarest. One yardstick, valid across every species and every day of the three
+years.
+
+Three implementation decisions that make it work:
+
+- **`A_REF` is measured, not chosen.** Stage 6 runs all 1018 days logging per-type
+  abundance daily; `A_REF` is the smallest **7-day rolling mean** any type reaches
+  while present. A rolling mean rather than an instantaneous minimum, because one
+  straggler on one afternoon is noise — and *"the place it is rarest"* should be a
+  place rather than a moment. The measured value is then two bytes in flash.
+- **The bar is logarithmic**, with a tick at every decade. The range across the
+  voyage is three to four orders of magnitude; on a linear bar everything except
+  the current winner would be one pixel wide. The decade ticks are what stop a log
+  scale being mysterious — you can see that a bar reaching the second tick means a
+  hundredfold without being told.
+- **Four characters, maximum**: `4.3`, `93`, `250`, `12K`, `>99K`. A decimal below
+  10, where the difference between 1.2 and 4.3 is the whole story; no units above
+  999, where nobody cares.
+
+The nice consequence: a species that is *always* rare — Acantharia, say — reads
+`2` or `3` forever, and its bar never leaves the first decade. That is true, and
+saying it plainly is more interesting than a share-of-biomass bar that would have
+shown it as a large fraction of nothing.
 
 Above the list, the voyage block you asked for: position in degrees and minutes,
 time at sea, time remaining, and **next port with days to run** — which is the
@@ -518,10 +596,39 @@ becomes a slideshow.
 
 So: **make it two named cadences and let the button choose.**
 
-| | Water | Map | Key | Chrome |
-|---|---|---|---|---|
-| `GALLERY` (default) | 20 min | 20 s | 15 s | ~3% |
-| `EXHIBIT` (yours) | 20 s | 10 s | 10 s | 33% |
+**Timings, concretely.** These are set by how long each screen actually needs,
+not by round numbers.
+
+*The map needs 12 s minimum and wants 18.* The dolly is the whole point of it,
+and a dolly cannot be hurried: ~2 s holding the globe so the eye registers
+"Earth", 5–7 s moving, 5–8 s at chart scale to find the coast and the ship. Below
+about 12 s it reads as a flash rather than a move, and the design collapses.
+
+*The key plate wants 15 s and tolerates 11.* Five to seven rows at roughly 2 s
+each to scan a specimen and a name, plus the voyage block. It is static, so there
+is no motion to wait out — this is purely reading time.
+
+*Dissolves are 1.5 s each*, which is slow enough to read as an engraving being
+replaced rather than a screen wipe.
+
+| | `GALLERY` (default) | `EXHIBIT` (yours) |
+|---|---|---|
+| water | **18 min** | **20 s** |
+| dissolve | 1.5 s | 1 s |
+| map — globe hold | 3 s | 2 s |
+| map — dolly in | 7 s | 5 s |
+| map — chart hold | 8 s | 5 s |
+| dissolve | 1.5 s | 1 s |
+| water | **18 min** | **20 s** |
+| dissolve | 1.5 s | 1 s |
+| key plate | 15 s | 11 s |
+| dissolve | 1.5 s | 1 s |
+| **cycle** | **36 min** | **67 s** |
+| **chrome** | 39 s, **1.8%** | 27 s, **40%** |
+
+`EXHIBIT` comes out at 40% rather than your 33% because the map is given 12 s
+instead of 10 — the extra two seconds are the difference between the dolly
+landing and not.
 
 The button (`m` in the preview, KEY on the panel) does the obvious thing: one
 press advances to the next screen immediately; **a press also drops the piece
@@ -663,12 +770,6 @@ Ranked by probability × damage.
 3. **What happens at day 1018.** Start again identically? Start again with a new
    seed, so the second circumnavigation has a different community in the same
    ocean? The second is better and costs one line.
-4. **Sensors.** The original concept coupled the ecosystem to your room —
-   light, temperature, pressure. The voyage version has a real ocean instead, and
-   the two forcings will fight. Options: drop the sensors; or use them as *weather
-   on top of the climatology* (room light → cloud cover, pressure → storminess),
-   which keeps the room in the piece without letting it overrule the ocean. The
-   second, probably — but it is a real design decision and it changes the BOM.
-5. **Land at close zoom.** Outline only (Tudor-chart correct, very spare), or
+4. **Land at close zoom.** Outline only (Tudor-chart correct, very spare), or
    hatched/stippled fill at high zoom? Outline is safer; hatching would look
    magnificent and could easily look like a mistake.
