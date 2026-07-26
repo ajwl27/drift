@@ -94,6 +94,7 @@ K_CHL = 0.055               # extra attenuation per unit biomass (self-shading)
 N_DEEP = 13.0              # deep nutrient reservoir
 GRAZE_RADIUS = 26.0        # metres... artistic licence, see note below
 RESPIRATION = 0.06
+K_PREY = 10.0              # prey half-saturation, in agents. See _graze_f.
 
 # NOTE ON SCALE. The depth axis is real: it drives light, nutrients and diel
 # migration. Organism size is NOT to scale -- a 60 um diatom would be a
@@ -784,6 +785,7 @@ class Ecosystem:
         self.nit = [0.06] * NBINS          # chemoautotroph biomass per bin
         self.agents = []
         self.det = []
+        self._graze_f = 1.0
         self.snow = [[r.uniform(0, W), r.uniform(0, H),
                       r.uniform(0.6, 2.4), r.random() < 0.30]
                      for _ in range(SNOW_COUNT)]
@@ -897,7 +899,7 @@ class Ecosystem:
                     d.mass -= take
                     got += take * 0.55
                     break
-        rate = 2.0 if a.g.kind == COPEPOD else 0.85
+        rate = (2.0 if a.g.kind == COPEPOD else 0.85) * self._graze_f
         for p in self.agents:
             if p is a or p.doomed or p.g.kind not in DRIFTER_KINDS:
                 continue
@@ -941,6 +943,16 @@ class Ecosystem:
 
         drifters = [a for a in self.agents
                     if a.g.kind in DRIFTER_KINDS and not a.doomed]
+        # Holling type III grazing. Without this the model has no prey refuge
+        # at all: encounter rate falls only as fast as the prey thin out, so
+        # a grazer population built up during a bloom will follow the prey
+        # all the way to literally zero -- which it did, on day 120, off the
+        # Rio de la Plata, with nutrients abundant and light plentiful. A
+        # sigmoid response is what real grazers show and what NPZ models have
+        # used since Fasham: below about ten prey the grazers effectively
+        # stop finding them, and the population always keeps a seed.
+        nd = len(drifters)
+        self._graze_f = (nd * nd) / (nd * nd + K_PREY * K_PREY)
         hets = [a for a in self.agents
                 if a.g.kind in HET_KINDS and not a.doomed]
         n_drift = len(drifters)
@@ -1054,7 +1066,7 @@ class Ecosystem:
 
         # ---- a resilient overwintering community: never a bare column ------
         n_phyto = sum(1 for a in self.agents if a.g.kind in DRIFTER_KINDS)
-        if n_phyto < 10 and rng.random() < 2.5 * dt:
+        if n_phyto < 12 and rng.random() < (2.5 + 3.5 * (1.0 - n_phyto / 12.0)) * dt:
             self._spawn_drifter().mass = rng.uniform(0.35, 0.60)
         if sum(1 for a in self.agents if a.g.kind == COPEPOD) < 1 and rng.random() < 0.8 * dt:
             self._spawn_het(COPEPOD)
