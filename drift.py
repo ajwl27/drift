@@ -116,6 +116,7 @@ class Canvas:
         self.buf[:] = b"\x00" * (self.w * self.h)
 
     def px(self, x, y):
+        x = int(x); y = int(y)
         if 0 <= x < self.w and 0 <= y < self.h:
             self.buf[y * self.w + x] = 1
 
