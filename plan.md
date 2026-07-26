@@ -461,7 +461,7 @@ hardware, and it says yes with two orders of magnitude to spare.
 `c` already hides plate furniture. On the map it hides graticule, scale bar and
 caption, leaving **coastline, track and ship** on bare paper. That is a beautiful,
 very spare object — and in mid-Pacific it is nearly blank, which is honest but
-worth seeing before committing. The rendered comparison is in `map_clean.png`.
+worth seeing before committing. The rendered comparison is in `docs/map_clean.png`.
 
 ---
 
