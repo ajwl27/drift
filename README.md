@@ -48,6 +48,7 @@ minutes.
 | `tools/make_coast.py` | Natural Earth shapefile → the packed coastline in `data/`. |
 | `tools/make_ocean.py` | WOA23 / OISST / Ifremer netCDF → the packed ocean in `data/`. |
 | `tools/plot_track.py` | the ocean along the whole voyage, as a diagnostic plot. |
+| `tools/check_biogeography.py` | does the emergent composition match known biogeography? `run 5` to sweep five seeds and find out. |
 | `plan.md` | where this is going. |
 
 ## Data

@@ -712,6 +712,70 @@ needs sixteen.
 
 ---
 
+## 7d. The traits — **done**
+
+`TRAITS` in `drift.py`, and `tools/check_biogeography.py run 5` is the gate.
+
+Everything is derived from **size**, using the published exponents rather than
+invented numbers: `mu_max ∝ V^-0.25`, `K_N ∝ V^+0.30`, `sink ∝ V^+0.39`,
+`respiration ∝ V^-0.25`. Diatoms get a higher intercept, not a different
+exponent. Grazing is a log-normal size kernel with per-type predator:prey
+ratios from Hansen et al. 1994 — copepods 18:1, ciliates 8:1, dinoflagellates
+3:1 — so a new organism's place in the food web is decided by how big it is.
+
+**There is no column saying where anything lives.**
+
+Four failures on the way, each of which was the model saying something true:
+
+1. **Founder effect, mistaken for competition.** The reseed only fired when the
+   population was already depleted, so once the panel was full nothing new could
+   arrive. *Chaetoceros* held the tropics at 100% for two hundred days on water
+   *Navicula* should have taken. Arrivals are now continuous, and the cap is paid
+   for afterwards by whichever individuals have the lowest vigour. A hard cap is a
+   rendering constraint; making it cull the least fit is the only way to stop it
+   behaving like an ecological one.
+2. **The smallest type took 91% of the voyage.** Pure allometry says a small cell
+   has both a higher growth rate *and* a lower half-saturation — it is better at
+   everything, and with size as the only axis it wins the ocean. What a large
+   diatom buys with its size is not physiology, it is **not being eaten**. So
+   `defence` became a trait — and it is a happy convergence, because the features
+   that make an organism worth drawing (setae, frustule, horns, spines) are the
+   same ones that make it hard to swallow.
+3. **The mixotrophs could not hold the gyres**, because there was nothing for them
+   to eat and the microzooplankton had no prey at all — the smallest resolved cell
+   was a 30 µm diatom and the entire small-cell class was missing. Picoplankton now
+   exist as a scalar per depth bin with the lowest half-saturation in the model,
+   competing for the same nitrogen, grazed by everything below copepod size, and
+   rendered through the stipple exactly as §1 planned. They are what a subtropical
+   gyre is actually made of.
+4. **The three diatoms were one organism with three drawings** — optima of 12, 14
+   and 15 °C with widths of 12–14. At 8, 15 and 20 °C with narrow widths they are a
+   cold bloom-former, a temperate generalist and a subtropical shelf diatom.
+
+**Result**, median over five seeds:
+
+| | | |
+|---|---|---|
+| cool productive coast → diatoms | 79% | > 55% |
+| oligotrophic gyres → mixotrophs | 67% | > 35% |
+| Southern Ocean is not a diatom bloom | 48% | < 80% |
+| Indian Ocean gyre → mixotrophs | 70% | > 30% |
+| effective types (inverse Simpson) | 3.20 of 5 | > 2.30 |
+| distinct dominants | 5 | ≥ 4 |
+| changes of dominant across the voyage | 15 | |
+
+The checker judges the **median over five seeds**, which matters more than it
+sounds: the first four runs gave effective-type counts of 2.45, 2.83, 3.20 and
+3.66, and a threshold set anywhere in that range would have passed or failed on
+luck. The thresholds are set to catch a regression, not to be cleared by the
+best run.
+
+`docs/biogeography.png` is the payoff: southern Chile as a *Chaetoceros* chain
+bloom, the Humboldt as a *Navicula* smear thick with grazers, and both gyres as
+sparse radiolarian-and-*Ceratium* assemblages over a heavy picoplankton stipple.
+
+---
+
 ## 8. Morphology roster
 
 Sixteen types. Chosen for silhouette separation at ~20 px as much as for ecology,
@@ -801,13 +865,13 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 | **1** | ✅ Track + course-up map | `voyage.py`, `mapview.py`, `data/coast.bin`, committed | — |
 | **2** | ✅ Screen rotation | `screens.py` — Bayer dissolve, GALLERY/EXHIBIT cadences, `m` key. Voyage on one clock with the ecosystem. `--voyage` renders all 1018 days. | done |
 | **3** | ✅ Ocean data pipeline | `tools/make_ocean.py`, `ocean.py`, `data/ocean.bin` (475 kB at 2°), `tools/plot_track.py` → `docs/ocean_track.png`. Environment wired to it. | done |
-| **4** | Trait refactor | Constants → 16-row trait table. **Same 7 organisms, no new morphology.** Validate against the §6 checklist. This is the risky stage; do it alone. | ~2 sessions |
+| **4** | ✅ Trait refactor | Trait table + allometry + defence + picoplankton. `tools/check_biogeography.py run 5` is the gate, and it passes. | done |
 | **5** | New morphologies | 12 draw functions (9 large, 3 small), one at a time, each checked at both 20 px **and r = 3** on the real canvas before the next. Each also needs a name, a three-word role and a `KEY_R` for the key plate. | ~2–3 sessions |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |
 
-**Why 4 and 5 are separate.** The temptation is to do them together, because new
+**Why 4 and 5 were separate.** The temptation is to do them together, because new
 organisms are the fun part and a trait refactor is not. Resist it: if the
 biogeography comes out wrong and sixteen morphologies changed at the same time,
 there is no way to tell whether the model is wrong or the drawing is. Stage 4
