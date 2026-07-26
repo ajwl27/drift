@@ -206,7 +206,6 @@ def draw_scale(c, cam, w=W, h=H):
 
 
 def draw_caption(c, track, day, w=W, h=H):
-    frm, to = track.leg(day)
     conf = track.confidence(day)
     la, lo = track.position(day)
     text(c, 12, 14, "DAY %d OF %d" % (int(day), track.days[-1]))
@@ -214,8 +213,18 @@ def draw_caption(c, track, day, w=W, h=H):
     ew = "E" if lo >= 0 else "W"
     text(c, 12, 22, "%02d%s%s  %03d%s%s"
          % (abs(int(la)), "\xb0", ns, abs(int(lo)), "\xb0", ew))
-    lab = to if conf >= 1 else to + " (INFERRED)"
-    text(c, 12, h - 16, lab[:34])
+
+    # Bottom left: what the ship is doing. When under way it is worth saying
+    # where to, because a course line with no destination is only half a
+    # statement. The confidence flag rides on this line rather than getting
+    # its own, since the only positions we are unsure of are ones at sea.
+    st = track.status(day)
+    if track.anchored(day) is None:
+        port, away = track.next_port(day)
+        st = "AT SEA   %s %dD" % (port[:13], int(away))
+        if conf < 1:
+            st = "AT SEA   TRACK INFERRED"
+    text(c, 12, h - 16, st[:36])
 
 
 def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):

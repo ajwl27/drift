@@ -23,13 +23,20 @@ Keys:
     space       pause
     wheel       speed, continuously (shift+wheel for coarse jumps)
     1 2 3 4 5   speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per sec
+    m           next screen now, and switch to the EXHIBIT cadence
     c           CLEAN MODE -- organisms and snow only, all chrome hidden
     h           toggle HUD
-    p           toggle the footer (name, position, voyage progress)
+    p           toggle the footer / map and key plate chrome
     n           toggle the chemoautotroph stipple
     s           save a PNG
     r           reseed the world
     esc         quit
+
+The voyage runs on the same clock as the ecosystem -- there is no separate
+voyage rate. At the default 1 MIN/SEC a simulated day takes 24 real minutes
+and the whole circumnavigation takes 17 real days: slow enough to be a thing
+that sits there, fast enough that it has moved between one look and the
+next.
 
 Headless (writes stills, no pygame needed):
     python3 drift.py --stills out/
@@ -196,11 +203,63 @@ class Canvas:
             pts.append((cx + px * ca - py * sa, cy + px * sa + py * ca))
         self.polyline(pts, close=True)
 
+    def blend_from(self, a, b, f):
+        """Ordered-dither dissolve: f=0 is all of a, f=1 is all of b.
+
+        A crossfade needs greys, and there are none. So the fade happens in
+        *area* instead: an 8x8 Bayer matrix decides, per pixel, which of the
+        two images to take, and raising the threshold moves pixels across in
+        the scattered order the matrix defines. It looks like an engraving
+        being replaced rather than a screen wiping, which is the whole reason
+        to do it this way rather than a hard cut.
+
+        This is a framebuffer operation and so it belongs to Canvas, which
+        means it belongs to the C layer: on the MCU it is a loop over 12 kB of
+        packed 1bpp with a threshold lookup, and costs nothing. Here it is
+        96,000 Python iterations a frame, so the preview takes the numpy
+        path -- exactly like the blit."""
+        thr = f * 64.0
+        w, h = self.w, self.h
+        try:
+            import numpy as np
+        except ImportError:
+            np = None
+        if np is not None:
+            m = np.asarray(BAYER8, dtype=np.uint8)
+            mask = np.tile(m, ((h + 7) // 8, (w + 7) // 8))[:h, :w] < thr
+            av = np.frombuffer(bytes(a.buf), dtype=np.uint8).reshape(h, w)
+            bv = np.frombuffer(bytes(b.buf), dtype=np.uint8).reshape(h, w)
+            self.buf[:] = np.where(mask, bv, av).tobytes()
+            return
+        ab, bb, db = a.buf, b.buf, self.buf
+        for y in range(h):
+            row = y * w
+            br = BAYER8[y & 7]
+            for x in range(w):
+                i = row + x
+                db[i] = bb[i] if br[x & 7] < thr else ab[i]
+
     def rect(self, x0, y0, x1, y1):
         self.line(x0, y0, x1, y0)
         self.line(x1, y0, x1, y1)
         self.line(x1, y1, x0, y1)
         self.line(x0, y1, x0, y0)
+
+
+# 8x8 ordered dither, values 0..63. The classic recursive Bayer matrix: any
+# threshold on it scatters the chosen pixels as evenly as possible, which is
+# why a dissolve driven by it reads as a texture changing rather than a
+# pattern sweeping across.
+BAYER8 = (
+    ( 0, 32,  8, 40,  2, 34, 10, 42),
+    (48, 16, 56, 24, 50, 18, 58, 26),
+    (12, 44,  4, 36, 14, 46,  6, 38),
+    (60, 28, 52, 20, 62, 30, 54, 22),
+    ( 3, 35, 11, 43,  1, 33,  9, 41),
+    (51, 19, 59, 27, 49, 17, 57, 25),
+    (15, 47,  7, 39, 13, 45,  5, 37),
+    (63, 31, 55, 23, 61, 29, 53, 21),
+)
 
 
 # --- tiny 3x5 font, column-major, bit 0 = top row -------------------------
@@ -271,11 +330,35 @@ class Environment:
     by the real sensor package: a light sensor on the front, and a BME280 for
     temperature and pressure. Until then they are a plausible fiction."""
 
-    def __init__(self, rng):
+    def __init__(self, rng, track=None):
         self.rng = rng
+        self.track = track          # None -> stand still at Melbourn
         self.cloud = 0.5
         self.storm = 0.0
         self.temp_anomaly = 0.0
+
+    def where(self, t_days):
+        if self.track is None:
+            return LAT, LON
+        return self.track.position(t_days)
+
+    def hemisphere_doy(self, t_days):
+        """Day of year, flipped in the southern hemisphere.
+
+        The cheapest possible way to make the voyage reach the water, and the
+        most visible: everything seasonal in this model is phased off a day
+        number, so offsetting that number by half a year below the equator
+        gives correct southern seasons for free. Drake crossed the line four
+        times, so the piece catches four reversals -- and two spring blooms in
+        opposite hemispheres in the same voyage year.
+
+        This is a stopgap. Stage 3 replaces it with real climatology, at which
+        point the hemisphere handles itself."""
+        doy = t_days % 365.25
+        lat, _ = self.where(t_days)
+        if lat < 0.0:
+            doy = (doy + 182.625) % 365.25
+        return doy
 
     def step(self, dt_days):
         r = self.rng
@@ -290,17 +373,23 @@ class Environment:
         self.temp_anomaly = max(-2.5, min(2.5, self.temp_anomaly))
 
     def surface_light(self, t_days):
-        """Normalised 0..1 irradiance just below the surface."""
+        """Normalised 0..1 irradiance just below the surface, at the ship.
+
+        Not flipped by hemisphere -- the real solar geometry already handles
+        that, because it takes the actual latitude. This is the one seasonal
+        term in the model that was correct all along and just needed telling
+        where it was."""
         doy = (t_days % 365.25) + 1
         hour = (t_days % 1.0) * 24.0
-        elev = solar_elevation(doy, hour)
+        lat, lon = self.where(t_days)
+        elev = solar_elevation(doy, hour, lat, lon)
         if elev <= 0:
             return 0.0
         clear = 0.25 + 0.75 * (1.0 - self.cloud)
         return math.sin(elev) * clear
 
     def mixed_layer_depth(self, t_days):
-        doy = t_days % 365.25
+        doy = self.hemisphere_doy(t_days)
         # deepest around mid-February, shallowest around mid-August
         seasonal = 0.5 + 0.5 * math.cos(2 * math.pi * (doy - 46) / 365.25)
         mld = 18.0 + 62.0 * seasonal
@@ -323,13 +412,21 @@ class Environment:
         return (tide + U_RESID) * shear * (1.0 + 0.5 * self.storm)
 
     def temperature(self, t_days, z):
-        doy = t_days % 365.25
-        surf = 10.5 + 5.5 * math.sin(2 * math.pi * (doy - 115) / 365.25)
+        doy = self.hemisphere_doy(t_days)
+        lat, _ = self.where(t_days)
+        # A crude latitudinal gradient standing in for real SST until Stage 3
+        # brings the climatology in. Warm at the equator, near freezing at the
+        # poles, with the seasonal swing largest at high latitude.
+        clat = math.cos(math.radians(lat))
+        mean = -1.5 + 30.0 * clat ** 1.7
+        swing = 1.5 + 6.0 * (1.0 - clat)
+        surf = mean + swing * math.sin(2 * math.pi * (doy - 115) / 365.25)
         surf += self.temp_anomaly
         mld = self.mixed_layer_depth(t_days)
         if z <= mld:
             return surf
-        return surf - (surf - 8.0) * min(1.0, (z - mld) / 40.0)
+        deep = min(surf, 4.0 + 6.0 * clat)
+        return surf - (surf - deep) * min(1.0, (z - mld) / 40.0)
 
 
 # --------------------------------------------------------------------------
@@ -673,9 +770,10 @@ def visual_radius(a):
 
 
 class Ecosystem:
-    def __init__(self, seed=None, start_day=40.0):
+    def __init__(self, seed=None, start_day=0.0, track=None):
         self.rng = random.Random(seed)
-        self.env = Environment(self.rng)
+        self.env = Environment(self.rng, track)
+        self.track = track
         self.t = start_day
         r = self.rng
         # Depth-resolved nitrogen in two pools. New production (nitrate) and
@@ -1026,7 +1124,7 @@ class Ecosystem:
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
-TOP_M, BOT_M = 4, 18          # margins. Were 9/26 when there was a border
+TOP_M, BOT_M = 4, 28          # margins. Were 9/26 when there was a border
                               # to clear; the footer is all that is left.
 
 
@@ -1155,8 +1253,12 @@ def draw_plate(eco, c, track=None, day=None):
     and how far through.
 
     The progress bar is a hairline with a single tick, because the number of
-    days is not interesting and the proportion is."""
-    y = H - 13
+    days is not interesting and the proportion is.
+
+    Two lines, and the columns mean something: identity on the left, state on
+    the right. So the eye learns in a day that the right-hand column is where
+    the answer to 'where are we and what are we doing' lives."""
+    y = H - 24
     text(c, 8, y, "DRIFT")
 
     if track is not None and day is not None:
@@ -1165,13 +1267,15 @@ def draw_plate(eco, c, track=None, day=None):
             abs(int(la)), "\xb0", int(abs(la) % 1 * 60), "N" if la >= 0 else "S",
             abs(int(lo)), "\xb0", int(abs(lo) % 1 * 60), "E" if lo >= 0 else "W")
         text(c, W - 8 - text_width(pos), y, pos)
+        st = track.status(day)
+        text(c, W - 8 - text_width(st), y + 9, st)
         f = day / track.days[-1]
     else:
         # standing at Melbourn, no voyage: fall back to the date
         text(c, W - 8 - text_width(date_label(eco.t)), y, date_label(eco.t))
         f = (eco.t % 365.25) / 365.25
 
-    by = H - 5
+    by = H - 6
     c.line(8, by, W - 9, by)
     x = 8 + (W - 17) * f
     c.line(x, by - 3, x, by + 1)
@@ -1305,11 +1409,19 @@ def preview():
     pygame.display.set_caption("Drift")
     clock = pygame.time.Clock()
 
-    eco = Ecosystem(seed=None, start_day=40.0)
+    from voyage import Track
+    from mapview import Coast
+    from screens import Rotation, Compositor, GALLERY
+
+    track = Track()
+    coast = Coast("data/coast.bin")
+    eco = Ecosystem(seed=None, start_day=0.0, track=track)
     canvas = Canvas(W, H)
     view = View()
-    speed = PRESETS[2]          # 1 hour per second
-    paused = False
+    rot = Rotation(GALLERY)
+    comp = Compositor()
+    speed = PRESETS[1]          # 1 min per second: a voyage day every 24 real
+    paused = False              # minutes, the whole circumnavigation in 17 days
     toast = 0.0                 # seconds left on the transient speed readout
     shot = 0
 
@@ -1343,8 +1455,10 @@ def preview():
                     view.plate = not view.plate
                 elif e.key == pygame.K_n:
                     view.chemo = not view.chemo
+                elif e.key == pygame.K_m:
+                    rot.skip()
                 elif e.key == pygame.K_r:
-                    eco = Ecosystem(seed=None, start_day=eco.t)
+                    eco = Ecosystem(seed=None, start_day=eco.t, track=track)
                 elif e.key == pygame.K_s:
                     to_pil(canvas).resize((W * 4, H * 4), 0).save(
                         "drift_%03d.png" % shot)
@@ -1363,13 +1477,19 @@ def preview():
             steps = max(1, min(64, int(dt / 0.015) + 1))
             for _ in range(steps):
                 eco.step(dt / steps)
+            # home again. The second circumnavigation gets a fresh seed, so
+            # the same ocean grows a different community -- one line, and it
+            # is the difference between a loop and a repeat.
+            if eco.t >= track.days[-1]:
+                eco = Ecosystem(seed=None, start_day=0.0, track=track)
+            rot.advance(real_dt)
 
         toast = max(0.0, toast - real_dt)
 
-        render(eco, canvas, view)
+        comp.frame(canvas, rot, eco, track, coast, view)
         status = speed_label(speed) + ("  PAUSED" if paused else "")
         if view.hud:
-            text(canvas, 12, H - 30, status)
+            text(canvas, 12, H - 38, status)
         elif toast > 0.0:
             # clean mode keeps its own counsel, except for a moment after you
             # touch the wheel
@@ -1385,8 +1505,68 @@ def preview():
     pygame.quit()
 
 
+def voyage_sweep(outdir, every=30, seed=7):
+    """Run the whole circumnavigation headless and lay it out as a contact
+    sheet, one panel per `every` days.
+
+    This is the only test that matters. Everything else checks that a piece
+    works; this checks whether the object is any good -- and it is the thing
+    Stage 6 is built around, so it exists now, in embryo, rather than being
+    written at the end when it is too late to change anything."""
+    import os
+    from voyage import Track
+    from PIL import Image
+
+    os.makedirs(outdir, exist_ok=True)
+    track = Track()
+    eco = Ecosystem(seed=seed, start_day=0.0, track=track)
+    canvas = Canvas(W, H)
+    view = View(hud=False)
+    total = track.days[-1]
+
+    tiles, log = [], []
+    nxt = 0.0
+    while eco.t < total:
+        eco.step(1.0 / 12.0)
+        if eco.t >= nxt:
+            render(eco, canvas, view, track, eco.t)
+            tiles.append(to_pil(canvas))
+            la, lo = track.position(eco.t)
+            log.append((int(eco.t), la, lo, eco.env.temperature(eco.t, 2.0),
+                        eco.env.mixed_layer_depth(eco.t), eco.biomass,
+                        len(eco.agents), eco.n_zoo, track.status(eco.t)))
+            nxt += every
+
+    cols = 9
+    rows = (len(tiles) + cols - 1) // cols
+    g = 6
+    sheet = Image.new("L", (cols * (W + g) + g, rows * (H + g) + g), 245)
+    for i, t in enumerate(tiles):
+        sheet.paste(t, (g + (i % cols) * (W + g), g + (i // cols) * (H + g)))
+    path = os.path.join(outdir, "voyage.png")
+    sheet.save(path)
+
+    with open(os.path.join(outdir, "voyage.csv"), "w") as f:
+        f.write("day,lat,lon,sst,mld,biomass,agents,zoo,status\n")
+        for r in log:
+            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%d,%d,%s\n" % r)
+
+    bio = [r[5] for r in log]
+    n = [r[6] for r in log]
+    print("%s  %d panels" % (path, len(tiles)))
+    print("biomass  min %5.1f  median %5.1f  max %5.1f"
+          % (min(bio), sorted(bio)[len(bio) // 2], max(bio)))
+    print("agents   min %5d  median %5d  max %5d"
+          % (min(n), sorted(n)[len(n) // 2], max(n)))
+    empty = sum(1 for v in n if v < 6)
+    print("panels with fewer than 6 organisms: %d of %d" % (empty, len(n)))
+    return log
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--stills":
         stills(sys.argv[2])
+    elif len(sys.argv) > 2 and sys.argv[1] == "--voyage":
+        voyage_sweep(sys.argv[2])
     else:
         preview()

@@ -234,6 +234,25 @@ class Track:
         i, _ = self._seg(day)
         return self.wp[i][4], self.wp[min(i + 1, len(self.wp) - 1)][4]
 
+    def anchored(self, day):
+        """Name of the anchorage if the ship is not making way, else None.
+
+        Exact rather than inferred from speed: a dwell is encoded as the same
+        position on two different days, so this is a comparison, not a
+        threshold. Which matters, because the ship also crawls at a tenth of a
+        knot down the Patagonian coast and that is emphatically not anchored."""
+        i, _ = self._seg(day)
+        w0 = self.wp[i]
+        w1 = self.wp[min(i + 1, len(self.wp) - 1)]
+        if (w0[1], w0[2]) == (w1[1], w1[2]) and w1[0] > w0[0]:
+            return w0[4]
+        return None
+
+    def status(self, day):
+        """One line for the footer."""
+        at = self.anchored(day)
+        return ("ANCHORED  " + at) if at else "AT SEA"
+
     def next_port(self, day):
         """(name, days away) for the next waypoint the ship is not already
         sitting at. Skips the duplicate entries that encode a dwell, so at

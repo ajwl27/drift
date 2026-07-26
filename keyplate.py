@@ -167,13 +167,15 @@ def draw_progress(c, track, day, y0=12):
     text(c, 10, y0 + 9, "%02d%s%02d'%s   %03d%s%02d'%s"
          % (abs(int(la)), "\xb0", int(abs(la) % 1 * 60), ns,
             abs(int(lo)), "\xb0", int(abs(lo) % 1 * 60), ew))
-    text(c, 10, y0 + 18, "AT SEA %s" % _hms_days(day))
-    text(c, 10, y0 + 27, "TO GO  %s" % _hms_days(total - day))
-    lab = "NEXT   %s %dD" % (port[:13], int(away))
-    text(c, 10, y0 + 36, lab)
+    text(c, 10, y0 + 18, track.status(day)[:38])
+    # 'ELAPSED', not 'AT SEA' -- that phrase now means something else one line
+    # up, and two meanings for one label on the same plate is a bug.
+    text(c, 10, y0 + 27, "ELAPSED %s" % _hms_days(day))
+    text(c, 10, y0 + 36, "TO GO   %s" % _hms_days(total - day))
+    text(c, 10, y0 + 45, "NEXT    %s %dD" % (port[:13], int(away)))
 
     # progress bar: the voyage as a line, with a mark where we are
-    bx0, bx1, by = 10, W - 11, y0 + 48
+    bx0, bx1, by = 10, W - 11, y0 + 57
     c.line(bx0, by, bx1, by)
     c.line(bx0, by - 2, bx0, by + 2)
     c.line(bx1, by - 2, bx1, by + 2)
