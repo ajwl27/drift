@@ -78,6 +78,28 @@ LON = 0.0200
 Z_MAX = 55.0              # metres of water column mapped to the panel height
 MAX_PHYTO = 30             # separate caps, or phytoplankton crowd out the
 MAX_ZOO = 7                # grazers entirely during a bloom
+# HOW FAST THE WATER GOES PAST, and the honest version of this is worth
+# writing down because the obvious answer is unusable.
+#
+# The tidal drift as modelled averages 37 px/day, which at one second per
+# second is 0.0004 px/s: the water crosses the panel in **195 hours**. That
+# is, in practice, still.
+#
+# The tempting fix is to advect at the ship's actual speed. Drake makes about
+# 84 km/day, which is 0.97 m/s, and the panel at the magnification the
+# copepod is drawn at is about 50 mm of water. So literal advection is
+# **5,845 px/s -- 292 pixels per frame at 20 fps**, which is not fast water,
+# it is a grey field. The panel is not a window on the water beside the hull;
+# it is a SAMPLE of it, magnified two hundred times, and a sample does not
+# inherit the velocity of the thing it was taken from.
+#
+# So DRIFT_SCALE spans the usable ground between those two, and the top of
+# its range is set by what can be watched rather than by what is true: at
+# about 3,000 the water crosses the panel in a minute, which is brisk and
+# still legible. Tunable in tools/console.py, and it is a judgement about
+# looking, like SWIM_SCALE and TARGET_FPS.
+DRIFT_SCALE = 1.0
+
 IMMIGRATION = 0.35         # background arrivals per day even at anchor: the
                            # "everything is everywhere" term, now subordinate
                            # to advection.
@@ -808,11 +830,13 @@ class Environment:
         spring-neap envelope, plus a steady residual, both sheared with
         depth.  Everything advects together, which is what makes the
         assemblage read as one body of water rather than independent
-        particles doing random walks."""
+        particles doing random walks.
+
+        Multiplied by DRIFT_SCALE, which is where the argument is."""
         spring_neap = 0.62 + 0.38 * math.cos(2 * math.pi * (t_days - 2.0) / 14.765)
         tide = U_TIDE * spring_neap * math.sin(2 * math.pi * t_days / T_M2)
         shear = 0.30 + 0.70 * math.exp(-z / SHEAR_Z)
-        return (tide + U_RESID) * shear * (1.0 + 0.5 * self.storm)
+        return (tide + U_RESID) * shear * (1.0 + 0.5 * self.storm) * DRIFT_SCALE
 
     def temperature(self, t_days, z):
         if self.ocean is not None:
@@ -2060,6 +2084,11 @@ class Ecosystem:
         # time and then jumped -- which reads, from across a room, as
         # imperceptibly slow swimming.
         self.real_t = 0.0
+        self._restock_at = 0.0
+        # what the last ecology tick thought the panel should be carrying;
+        # the restocker tops up towards it and never past it
+        self._n_target_seen = 0
+        self._nz_target_seen = 0
         self.snow = [[r.uniform(0, W), r.uniform(0, H),
                       r.uniform(0.6, 2.4), r.random() < 0.30]
                      for _ in range(SNOW_COUNT)]
@@ -2176,6 +2205,7 @@ class Ecosystem:
                     a.mass = rng.uniform(0.45, 0.95)
                     n += 1
             arrive -= 1.0
+        self._n_target_seen = int(n_target)
         if n > n_target + 2:
             self._enforce_cap(n_target)
 
@@ -2435,6 +2465,18 @@ class Ecosystem:
             # metres in a minute would make nonsense of both
             a.z += v * dt_s * math.sin(a.body) * 0.25 / zpx
             a.ang = a.body + math.pi          # the drawings face -u
+            # WRAP AND CLAMP HERE, every frame.
+            #
+            # These two lines also live at the end of step(), which is where
+            # they used to be enough -- back when step() ran every frame.
+            # Once the ecology went hourly they stopped running for an hour
+            # at a time, so between ticks a swimmer would cross the right
+            # edge and keep going, or swim below the panel, and simply not be
+            # drawn until the next tick tidied it up. Reported as "two
+            # Calanus become none and stay that way for some time", which is
+            # exactly what it was.
+            a.x %= W
+            a.z = max(0.4, min(Z_MAX - 0.4, a.z))
 
     def _step_pico(self, dt, surface, chl, t):
         """Picoplankton, as a scalar field. Monod on the same nitrogen the
@@ -2553,6 +2595,34 @@ class Ecosystem:
         ecology. Use this for anything displayed; use `t` inside the model."""
         return self.t + self._acc
 
+    # Seconds between arrivals when the panel has lost somebody. The ecology
+    # runs hourly and that is right for the ecology; it is much too slow for
+    # a gap in the picture. At one second per second a grazer eaten at ten
+    # past would leave a hole until eleven.
+    #
+    # This is not a cheat bolted on to keep the picture full. The advection
+    # model (see the note above IMMIGRATION) already says the panel is
+    # showing new water every day or two and that the community is carried in
+    # from ahead rather than descended from what was there yesterday -- so
+    # arrivals are the dominant term, and running them on a clock a person
+    # can watch is more faithful than running them on the ecology's.
+    RESTOCK_S = 5.0
+
+    def _restock(self):
+        """Fill a hole in the drawn population, one individual at a time.
+
+        Composition is not chosen here: `_fit_kind` picks by fitness in the
+        current water, exactly as the hourly arrivals do, so the ratios stay
+        the model's. What this changes is only how long a gap is allowed to
+        sit there."""
+        n = sum(1 for a in self.agents if a.g.kind in DRIFTER_KINDS)
+        nz = sum(1 for a in self.agents if a.g.kind in HET_KINDS)
+        if n < self._n_target_seen and n < MAX_PHYTO:
+            a = self._spawn_drifter(kind=self._fit_kind(self.t))
+            a.mass = self.rng.uniform(0.45, 0.95)
+        elif nz < self._nz_target_seen and nz < MAX_ZOO:
+            self._spawn_het(self._seed_het())
+
     def advance(self, dt_days):
         """One frame. Use this rather than step() from anything with a frame
         rate; step() is the physics and this is the schedule."""
@@ -2566,6 +2636,9 @@ class Ecosystem:
                 self.step(chunk, swim=False)
             self._acc = 0.0
         self._swim(dt_days)
+        if self.real_t >= self._restock_at:
+            self._restock_at = self.real_t + self.RESTOCK_S
+            self._restock()
 
     def step(self, dt, swim=True):
         if dt <= 0:
@@ -2785,9 +2858,14 @@ class Ecosystem:
         # behaving like an ecological one.
         self._advect(dt, t)
         self._enforce_cap()
-        if sum(1 for a in self.agents if a.g.kind in HET_KINDS) < MAX_ZOO:
+        nz = sum(1 for a in self.agents if a.g.kind in HET_KINDS)
+        if nz < MAX_ZOO:
             if rng.random() < 1.2 * dt:
                 self._spawn_het(self._seed_het())
+                nz += 1
+        # the level the restocker restores to between ticks: what the ecology
+        # last decided the water was carrying, not a number of its own
+        self._nz_target_seen = nz
 
         # ---- marine snow ---------------------------------------------------
         zpx = (H - TOP_M - BOT_M) / Z_MAX

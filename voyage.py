@@ -44,13 +44,16 @@ class Voyage:
     the rest costing nothing. The card that goes in the box is printed from
     `notes`."""
 
-    __slots__ = ("key", "title", "subtitle", "departure", "waypoints", "notes")
+    __slots__ = ("key", "title", "subtitle", "departure", "epoch",
+                 "waypoints", "notes")
 
-    def __init__(self, key, title, subtitle, departure, waypoints, notes=""):
+    def __init__(self, key, title, subtitle, departure, epoch, waypoints,
+                 notes=""):
         self.key = key
         self.title = title
         self.subtitle = subtitle
         self.departure = departure
+        self.epoch = epoch          # (y, m, d) of day zero
         self.waypoints = waypoints
         self.notes = notes
 
@@ -424,13 +427,55 @@ def register(v):
     return v
 
 
+# The title is the SHIP. It was the captain, and the ship is better: this is
+# a piece about a hull moving through water for three years, the plankton
+# does not care whose flag it is under, and GOLDEN HIND is the name on the
+# card in the box. DARWIN likewise becomes BEAGLE.
+#
+# The dates are the recorded departures, Old Style -- England kept the Julian
+# calendar until 1752, and 13 December 1577 is what the accounts say. Using
+# them as written is right for the same reason the chart names capes rather
+# than cities: the object should say what a person of the voyage would have
+# said. Anyone converting to Gregorian for a modern almanac would add ten
+# days, and the plan says so; the panel does not need to.
 register(Voyage(
-    "drake", "DRAKE", "GOLDEN HIND  1577-1580", "13 DEC 1577",
-    DRAKE_WAYPOINTS, NOTES))
+    "drake", "GOLDEN HIND", "FRANCIS DRAKE  1577-1580", "13 DEC 1577",
+    (1577, 12, 13), DRAKE_WAYPOINTS, NOTES))
 
 register(Voyage(
-    "beagle", "DARWIN", "HMS BEAGLE  1831-1836", "27 DEC 1831",
-    BEAGLE_WAYPOINTS, BEAGLE_NOTES))
+    "beagle", "BEAGLE", "CHARLES DARWIN  1831-1836", "27 DEC 1831",
+    (1831, 12, 27), BEAGLE_WAYPOINTS, BEAGLE_NOTES))
+
+
+MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+          "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def _days_from_civil(y, m, d):
+    """Days since 1970-01-01. Howard Hinnant's algorithm: integer only, no
+    tables, no library, correct for any proleptic date -- which matters
+    because this has to run in C on a microcontroller with no time.h worth
+    having, and because 1577 is a long way outside what most date libraries
+    are willing to think about."""
+    y -= m <= 2
+    era = (y if y >= 0 else y - 399) // 400
+    yoe = y - era * 400
+    doy = (153 * (m + (-3 if m > 2 else 9)) + 2) // 5 + d - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+
+def _civil_from_days(z):
+    z += 719468
+    era = (z if z >= 0 else z - 146096) // 146097
+    doe = z - era * 146097
+    yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    y = yoe + era * 400
+    doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    mp = (5 * doy + 2) // 153
+    d = doy - (153 * mp + 2) // 5 + 1
+    m = mp + (3 if mp < 10 else -9)
+    return (y + (m <= 2), m, d)
 
 
 def _norm_lon(d):
@@ -553,10 +598,22 @@ class Track:
             return w0[4]
         return None
 
+    def date(self, day):
+        """The historical date, as recorded. "01 JUN 1578"."""
+        y, m, d = _civil_from_days(
+            _days_from_civil(*self.voyage.epoch) + int(day))
+        return "%02d %s %d" % (d, MONTHS[m - 1], y)
+
     def status(self, day):
-        """One line for the footer."""
+        """One line for the footer, with the date it happened on.
+
+        The day counter says how far through; the date says WHEN, and they
+        are not the same information. "DAY 420 OF 1018" is a progress bar in
+        words. "01 JUN 1578" is the thing that makes a person stop and work
+        out that this was four years before Gregory reformed the calendar."""
         at = self.anchored(day)
-        return ("ANCHORED  " + at) if at else "AT SEA"
+        head = ("ANCHORED " + at) if at else "AT SEA"
+        return "%s (%s)" % (head, self.date(day))
 
     def next_port(self, day):
         """(name, days away) for the next waypoint the ship is not already

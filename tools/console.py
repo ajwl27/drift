@@ -77,11 +77,23 @@ from ocean import Ocean                                        # noqa: E402
 
 SC = 2                       # panel upscale
 PAD = 10
-COL = 450                    # width of the control column, set so a
-                             # 100 mm calibration ruler fits at a
-                             # typical desktop monitor density
+# TWO COLUMNS OF CONTROLS, because one stopped fitting on a screen.
+#
+# Twenty-three parameters in eight groups is 1,460 px of single column, and
+# a 27in 1440p monitor is 1,440 px tall. The window would have been taller
+# than the display it was on, which is the point at which a layout has to
+# change rather than be argued with.
+#
+# Split by GROUP rather than by count, so a group never straddles the gap --
+# the groups are the only structure this list has and cutting one in half
+# would throw it away to save forty pixels.
+COL = 800                    # both control columns plus the gap between
+SUBCOL = 390                 # one of them
+GROUP_COL = {"MOTION": 0, "GAIT": 0, "WATER": 0,
+             "PANEL": 1, "SCENE": 1, "DISPLAY": 1,
+             "TIMING": 1, "KEY PLATE": 1}
 RULER_MM = 100               # the calibration bar's true length. Fixed.
-COLH = 1420                  # the control column's own height: sliders,
+COLH = 1020                  # the control column's own height: sliders,
                              # ruler, legend and footer. In true-size mode
                              # the panel is SMALLER than this, so the window
                              # is sized by the controls and not by the art.
@@ -172,6 +184,12 @@ PARAMS = [
           unit="x", group="GAIT"),
     Param("tumble", "shear tumble", 10.0, 600.0, drift.TUMBLE_S, log=True,
           fmt="%.0f", unit=" s", group="GAIT"),
+    # How fast the water goes past. 1.0 is the tide as modelled and the water
+    # crosses the panel in 195 hours; 3000 crosses it in about a minute.
+    # Literal ship-speed advection would be 5,845 px/s -- see the note on
+    # DRIFT_SCALE in drift.py for why that is not an option.
+    Param("drift", "water past", 1.0, 20000.0, drift.DRIFT_SCALE, log=True,
+          fmt="%.0f", unit="x", group="WATER"),
     Param("fps", "frame rate", 0.25, 51.0, float(drift.TARGET_FPS), log=True,
           fmt="%.2f", unit=" fps", group="PANEL"),
     # 1.0 is the piece's real setting: one second per second, the whole
@@ -255,6 +273,7 @@ def apply_state(st, eco):
     immediately before each ecosystem is stepped, which is what lets the two
     sides of an A/B differ in every parameter rather than only those two."""
     drift.BODY_TAU = st["body"]
+    drift.DRIFT_SCALE = st["drift"]
     drift.TUMBLE_S = st["tumble"]
     for k, v in BASE_YAW.items():
         drift.HELIX_YAW[k] = v * st["hyaw"]
@@ -457,6 +476,7 @@ def run(seed=5, day=420.0):
     paused = False
     pending = False
     dragging = None
+    dragcol = 0
     clock = pygame.time.Clock()
     status = ""
 
@@ -473,19 +493,25 @@ def run(seed=5, day=420.0):
         return (2 if split else 1) * (panel_px()[0] + PAD) + PAD
 
     def rows():
-        """(param, y) for each row, plus the group headers."""
+        """(param, x, y, group) for each row and each group header, laid out
+        in two columns split by group."""
         out = []
-        y = PAD + 72
+        y = [PAD + 72, PAD + 72]
         group = None
+        col = 0
         for p in PARAMS:
             if p.group != group:
                 group = p.group
-                y += 16
-                out.append((None, y, group))
-                y += 20
-            out.append((p, y, None))
-            y += 34
+                col = GROUP_COL.get(group, 0)
+                y[col] += 16
+                out.append((None, col, y[col], group))
+                y[col] += 20
+            out.append((p, col, y[col], None))
+            y[col] += 34
         return out
+
+    def row_x(col):
+        return col_x() + col * (SUBCOL + 20)
 
     def buttons():
         x0, w0 = col_x(), COL - PAD
@@ -644,11 +670,14 @@ def run(seed=5, day=420.0):
                         screen = toggle_split()
                 if done:
                     continue
-                for i, (p, y, _g) in enumerate(
+                for i, (p, cl, y, _g) in enumerate(
                         [r for r in rows() if r[0] is not None]):
-                    if y - 6 <= ev.pos[1] <= y + 26 and ev.pos[0] >= col_x():
+                    rx = row_x(cl)
+                    if (y - 6 <= ev.pos[1] <= y + 26
+                            and rx - 6 <= ev.pos[0] <= rx + SUBCOL):
                         sel = i
                         dragging = p
+                        dragcol = cl
                         break
             elif ev.type == pygame.MOUSEBUTTONUP:
                 if dragging is not None and dragging.key in DEFERRED:
@@ -719,8 +748,8 @@ def run(seed=5, day=420.0):
                     status = recommunity()
 
         if dragging is not None:
-            x0 = col_x() + 150
-            wpx = COL - PAD - 150 - 74
+            x0 = row_x(dragcol) + 130
+            wpx = SUBCOL - 130 - 84
             f = (pygame.mouse.get_pos()[0] - x0) / float(wpx)
             live.st[dragging.key] = dragging.value(f)
         if true_size and screen.get_size() != size(split):
@@ -779,25 +808,26 @@ def run(seed=5, day=420.0):
             draw_button(label, box, on)
 
         idx = 0
-        for p, y, group in rows():
+        for p, cl, y, group in rows():
+            rx = row_x(cl)
             if p is None:
-                screen.blit(small.render(group, True, DIM), (x0, y - 12))
-                pygame.draw.line(screen, FAINT, (x0 + 62, y - 7),
-                                 (x0 + COL - PAD - 8, y - 7))
+                screen.blit(small.render(group, True, DIM), (rx, y - 12))
+                pygame.draw.line(screen, FAINT, (rx + 74, y - 7),
+                                 (rx + SUBCOL - 8, y - 7))
                 continue
             on = (idx == sel)
             if on:
                 pygame.draw.rect(screen, (232, 238, 247),
-                                 (x0 - 4, y - 6, COL - PAD + 4, 32),
+                                 (rx - 4, y - 6, SUBCOL + 4, 32),
                                  border_radius=4)
             screen.blit(font.render(p.label, True, INK if on else (70, 76, 84)),
-                        (x0, y))
+                        (rx, y))
             v = live.st[p.key]
             lab = TCOMP_NAME.get(v, p.text(v)) if p.key == "tcomp" \
                 else p.text(v)
             t = font.render(lab, True, HOT if on else INK)
-            screen.blit(t, (x0 + COL - PAD - 8 - t.get_width(), y))
-            bx, bw = x0 + 150, COL - PAD - 150 - 74
+            screen.blit(t, (rx + SUBCOL - 8 - t.get_width(), y))
+            bx, bw = rx + 130, SUBCOL - 130 - 84
             pygame.draw.line(screen, FAINT, (bx, y + 22), (bx + bw, y + 22), 3)
             kx = bx + int(bw * min(1.0, max(0.0, p.frac(v))))
             pygame.draw.line(screen, (150, 158, 168),
@@ -807,7 +837,7 @@ def run(seed=5, day=420.0):
                                (kx, y + 22), 5 if on else 4)
             idx += 1
 
-        ly = rows()[-1][1] + 46
+        ly = max(r[2] for r in rows()) + 46
         if true_size:
             # CALIBRATE BY MEASURING, NOT BY ARITHMETIC. The ppi computed
             # from a monitor's advertised size and resolution is right only

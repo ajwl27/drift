@@ -1029,6 +1029,106 @@ Ranked by probability × damage.
 
 ---
 
+## 10p. The ship's name, the date, and the hole in the water
+
+### GOLDEN HIND, not DRAKE
+
+The title is the **ship**. It was the captain, and the ship is better: this is
+a piece about a hull moving through water for three years, the plankton does
+not care whose flag it is under, and GOLDEN HIND is the name on the card in
+the box. DARWIN likewise becomes BEAGLE.
+
+### The date, as recorded
+
+`AT SEA (06 FEB 1579)` on all three screens. The day counter says how far
+through; the date says *when*, and they are not the same information. "DAY 420
+OF 1018" is a progress bar in words. "06 FEB 1579" is the thing that makes a
+person stop and work out that this was four years before Gregory reformed the
+calendar.
+
+Day zero is the recorded departure -- 13 December 1577 for the Golden Hind, 27
+December 1831 for the Beagle -- and the dates are **Old Style**. England kept
+the Julian calendar until 1752 and 13 December 1577 is what the accounts say.
+Using them as written is right for the same reason the chart names capes
+rather than cities: the object should say what a person of the voyage would
+have said. Anyone converting for a modern almanac adds ten days. Day 1018 is
+26 September 1580, which is the day the ship came home.
+
+The conversion is Howard Hinnant's civil-from-days: integer only, no tables,
+no library. That matters because it has to run in C on a microcontroller with
+no `time.h` worth having, and because 1577 is a long way outside what most
+date libraries are willing to think about.
+
+The map's `DAY x OF y` is now one size throughout. It used to be `DAY` at
+T_BIG with `OF 1018` tucked beside it, which made a headline of the counter --
+and the counter is the least interesting number on the chart now that the
+status line carries the actual date.
+
+### The hole in the water was mine
+
+Reported: two Calanus on screen become none, and stay that way. Traced, and it
+is the same class of bug as the frozen specimens.
+
+`a.x %= W` and the depth clamp lived at the **end of `step()`**, which is
+where they were enough back when `step()` ran every frame. Once the ecology
+went hourly they stopped running for an hour at a time -- so between ticks a
+swimmer would cross the right edge and keep going, or swim below the panel,
+and simply not be drawn until the next tick tidied it up. Both lines now run
+inside `_swim`, every frame.
+
+That is the cause. The second half of the ask is still worth having, because
+even a genuine death leaves a gap until the next hourly tick: `RESTOCK_S = 5`,
+and every five real seconds `_restock()` fills one hole. **Composition is not
+chosen there** -- `_fit_kind` picks by fitness in the current water, exactly as
+the hourly arrivals do, so the ratios stay the model's and only the latency
+changes. Measured: three grazers culled, all three back within fifteen
+seconds.
+
+This is not a cheat to keep the picture full. The advection model already says
+the panel is showing new water every day or two and that the community is
+carried in from ahead rather than descended from what was there yesterday --
+arrivals are the *dominant* term, and running them on a clock a person can
+watch is more faithful than running them on the ecology's.
+
+### How fast the water goes past, honestly
+
+`DRIFT_SCALE`, on a slider, and the arithmetic is worth stating because the
+obvious answer is unusable.
+
+The tidal drift as modelled averages 37 px/day, which at one second per second
+is **0.0004 px/s**: the water crosses the panel in **195 hours**. In practice,
+still.
+
+The tempting fix is to advect at the ship's speed. Drake makes about 84
+km/day, which is 0.97 m/s, and the panel at the magnification the copepod is
+drawn at is about **50 mm of water**. So literal advection is **5,845 px/s --
+292 pixels per frame at 20 fps**. That is not fast water, it is a grey field.
+The panel is not a window on the water beside the hull; it is a *sample* of
+it, magnified two hundred times, and a sample does not inherit the velocity of
+the thing it was taken from.
+
+So the slider spans 1x to 20,000x and the top of its range is set by what can
+be watched rather than by what is true:
+
+| DRIFT_SCALE | | water crosses the panel in |
+|---|---|---|
+| 1 | as modelled | 195 hours |
+| 500 | | 23 minutes |
+| 3,000 | | 4 minutes |
+| 12,000 | | 1 minute |
+| *5,845 px/s* | *literal* | *0.05 seconds* |
+
+### Two columns of controls
+
+Twenty-three parameters in eight groups is 1,460 px of single column, and a
+27in 1440p monitor is 1,440 px tall -- the window would have been taller than
+the display it was on, which is the point at which a layout has to change
+rather than be argued with. Split by **group** rather than by count, so a
+group never straddles the gap: the groups are the only structure the list has
+and cutting one in half would throw it away to save forty pixels.
+
+---
+
 ## 10o. **One second per second** — and what that actually costs
 
 The piece runs at 1:1. Drake was at sea for 1018 days; so is this. A gift

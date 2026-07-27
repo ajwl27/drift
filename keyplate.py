@@ -17,6 +17,7 @@ Canvas only. Ports with everything else.
 import math
 
 from drift import (Canvas, W, H, text, text_width, text_height, fit_scale,
+                   wrap,
                    T_BIG, T_MED, DRAW, DRIFTER_KINDS,
                    HET_KINDS, EXTENT, Genome, COPEPOD, draw_copepod,
                    RADIOLARIAN, CENTRIC, PENNATE, CHAIN, CERATIUM, TINTINNID,
@@ -441,12 +442,16 @@ def draw_header(c, track, day, y0=8):
     time and this one is up for fifteen seconds. Repeating it here at a size
     you can read would eat half the plate and leave room for two species,
     and two species is not a census."""
-    n = None
     sc = fit_scale(track.voyage.title, W - 20)
     text(c, 10, y0, track.voyage.title, scale=sc)
     y = y0 + text_height(sc) + 6
-    text(c, 10, y, track.status(day)[:24], scale=T_MED)
-    return y + text_height(T_MED) + 6
+    # wrapped, not cut at 24 characters. ANCHORED RIO DE LA PLATA
+    # (15 APR 1578) truncated to fit loses the date, which is the half of the
+    # line worth having.
+    for ln in wrap(track.status(day), W - 20, maxlines=2):
+        text(c, 10, y, ln, scale=T_MED)
+        y += text_height(T_MED) + 3
+    return y + 3
 
 
 # --------------------------------------------------------------------------

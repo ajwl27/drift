@@ -221,12 +221,13 @@ def draw_caption(c, track, day, w=W, h=H, alpha=1.0):
     # Day first and big: it is the one number on the chart a passer-by can
     # act on, and it answers "how far through is this thing" without needing
     # the bar. The position underneath at reading size.
-    d = "DAY %d" % int(day)
-    label(c, 10, 8, d, scale=T_BIG, alpha=alpha)
-    label(c, 10 + text_width(d, scale=T_BIG) + 8,
-          8 + text_height(T_BIG) - text_height(T_MED),
-          "OF %d" % track.days[-1], scale=T_MED, alpha=alpha)
-    label(c, 10, 8 + text_height(T_BIG) + 6, "%d%s%s  %d%s%s"
+    # One size for the whole block. DAY used to be T_BIG with OF 1018 tucked
+    # beside it at T_MED, which made a headline out of the counter -- and the
+    # counter is the least interesting number on the chart now that the
+    # status line carries the actual date.
+    label(c, 10, 8, "DAY %d OF %d" % (int(day), track.days[-1]),
+          scale=T_MED, alpha=alpha)
+    label(c, 10, 8 + text_height(T_MED) + 5, "%d%s%s  %d%s%s"
           % (abs(int(la)), "\xb0", ns, abs(int(lo)), "\xb0", ew),
           scale=T_MED, alpha=alpha)
 
@@ -304,7 +305,7 @@ def draw_places(c, cam, track, day, R, w=W, h=H, alpha=1.0):
     # the zones the chrome owns: the day block at the top, and the scale bar
     # plus two caption lines at the bottom. Measured from the same constants
     # those use, so moving one moves the other.
-    taken = [(0, 0, w, 8 + text_height(T_BIG) + 6 + text_height(T_MED) + 8),
+    taken = [(0, 0, w, 8 + 2 * text_height(T_MED) + 5 + 8),
              (0, h - 14 - 4 * (text_height(T_MED) + 5) - 14, w, h)]
 
     def fits(x, y, tw, th):
