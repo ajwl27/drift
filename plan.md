@@ -1094,12 +1094,60 @@ The spin-up in `tune.py` steps at `1/6` day rather than the simulation's usual
 motion tool; it needs a *plausible* community to look at, not a numerically
 careful one.
 
+### What `SWIM_SCALE` actually means — and it is cleaner than expected
+
+Worth writing down, because the arithmetic turns out to give the number an
+honest interpretation rather than leaving it an arbitrary knob.
+
+    v = bl * (2 * visual_radius) * SWIM_SCALE     # px per second
+
+`2 * visual_radius` **is the drawn body length in pixels**. So the speed in
+pixels per second, divided by the body length in pixels, is `bl * SWIM_SCALE` —
+the organism moves `bl * SWIM_SCALE` body lengths per second *on the panel*,
+against `bl` body lengths per second in the sea.
+
+**`SWIM_SCALE` is therefore the fraction of true speed the panel shows.** 1.0
+would be real time. The current 0.22 is **4.5× slow motion**; 0.12 is 8.3×;
+0.07 is 14×.
+
+This matters because the plate does not draw organisms to a common spatial
+scale — Micromonas at 5 µm gets 3 px of radius and Euphausia at 6 mm gets 6.7,
+a thousand-fold size range compressed into rather less than three-fold, because
+otherwise you would see one krill and no phytoplankton at all. Once the spatial
+scale is per-organism, pixels per second means nothing across the panel and
+body lengths per second is the only invariant left. Which is, conveniently,
+exactly the unit the swimming literature reports.
+
+Measured at day 420 (the Humboldt, 35 agents), seconds to cross the 240 px width:
+
+| | BL/s | drawn r | 0.07 | 0.12 | **0.22** | 0.38 |
+|---|---|---|---|---|---|---|
+| *Micromonas* | 14.0 | 3.0 px | 41 s | 24 s | **13 s** | 8 s |
+| tintinnid | 8.0 | 5.9 px | 36 s | 21 s | **12 s** | 7 s |
+| *Euphausia* | 3.0 | 6.7 px | 85 s | 50 s | **27 s** | 16 s |
+| *Ceratium* | 2.0 | 6.4 px | 134 s | 78 s | **43 s** | 25 s |
+| *Calanus* | 1.1 | 9.2 px | 169 s | 99 s | **54 s** | 31 s |
+| *Ornithocercus* | 1.6 | 1.9 px | 553 s | 323 s | **176 s** | 102 s |
+| *Salpa* | 0.6 | 6.0 px | 479 s | 279 s | **152 s** | 88 s |
+
+Read the top row as the constraint. At 0.22 the fastest flagellate crosses the
+whole panel in 13 seconds, which is faster than anything else in the piece by an
+order of magnitude and is very likely the thing that reads as *hurrying*. At
+0.12 it takes 24 s — still unambiguously moving, still visible from a sofa, but
+now on the same timescale as a slow look at the panel rather than a fifth of one.
+
+The bottom rows are the other constraint. At 0.07 *Ornithocercus* takes nine
+minutes to cross and *Salpa* eight, which is functionally stationary; the whole
+point of §10e was that a still panel is a dead panel. So the usable range is
+roughly **0.10–0.16**, and the tool exists to choose inside it.
+
 ### The result
 
 Pending — the values live in `drift.py` and get pasted back from the tool. What
 the plan records is the method, because the method is the defensible part: these
 two numbers are set by looking, and the tool exists so that looking is a
-controlled comparison rather than an impression.
+controlled comparison rather than an impression. The arithmetic above narrows
+the range; it cannot close it.
 
 ---
 
