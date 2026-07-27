@@ -11,7 +11,8 @@ place, so this whole module needs no heap.
 import math
 import struct
 
-from drift import Canvas, W, H, text, text_width
+from drift import (Canvas, W, H, text, text_width, text_height, fit_scale,
+                   label, T_BIG, T_MED)
 from voyage import Camera, Track, fill_radius, span_km
 
 
@@ -197,22 +198,32 @@ def draw_scale(c, cam, w=W, h=H):
     px = cam.R * math.sin(km / 6371.0)
     if px < 12 or px > w - 30:
         return
-    y = h - 30
-    x0 = 12
+    y = h - 44
+    x0 = 10
     c.line(x0, y, x0 + px, y)
-    c.line(x0, y - 3, x0, y + 3)
-    c.line(x0 + px, y - 3, x0 + px, y + 3)
-    text(c, x0 + px + 4, y - 2, "%d KM" % km)
+    c.line(x0, y - 4, x0, y + 4)
+    c.line(x0 + px, y - 4, x0 + px, y + 4)
+    # always above the left end of the bar: a label chasing the right end
+    # collides with the frame edge at wide zooms and with the bar itself at
+    # narrow ones, and above-left is the only position that never does either
+    label(c, x0, y - text_height(T_MED) - 5, "%d KM" % km, scale=T_MED)
 
 
 def draw_caption(c, track, day, w=W, h=H):
     conf = track.confidence(day)
     la, lo = track.position(day)
-    text(c, 12, 14, "DAY %d OF %d" % (int(day), track.days[-1]))
     ns = "N" if la >= 0 else "S"
     ew = "E" if lo >= 0 else "W"
-    text(c, 12, 22, "%02d%s%s  %03d%s%s"
-         % (abs(int(la)), "\xb0", ns, abs(int(lo)), "\xb0", ew))
+    # Day first and big: it is the one number on the chart a passer-by can
+    # act on, and it answers "how far through is this thing" without needing
+    # the bar. The position underneath at reading size.
+    d = "DAY %d" % int(day)
+    label(c, 10, 8, d, scale=T_BIG)
+    label(c, 10 + text_width(d, scale=T_BIG) + 8,
+          8 + text_height(T_BIG) - text_height(T_MED),
+          "OF %d" % track.days[-1], scale=T_MED)
+    label(c, 10, 8 + text_height(T_BIG) + 6, "%d%s%s  %d%s%s"
+          % (abs(int(la)), "\xb0", ns, abs(int(lo)), "\xb0", ew), scale=T_MED)
 
     # Bottom left: what the ship is doing. When under way it is worth saying
     # where to, because a course line with no destination is only half a
@@ -221,10 +232,10 @@ def draw_caption(c, track, day, w=W, h=H):
     st = track.status(day)
     if track.anchored(day) is None:
         port, away = track.next_port(day)
-        st = "AT SEA   %s %dD" % (port[:13], int(away))
+        st = "AT SEA  %s %dD" % (port[:12], int(away))
         if conf < 1:
-            st = "AT SEA   TRACK INFERRED"
-    text(c, 12, h - 16, st[:36])
+            st = "AT SEA  TRACK INFERRED"
+    label(c, 10, h - 10 - text_height(T_MED), st, scale=T_MED)
 
 
 # North stays up.

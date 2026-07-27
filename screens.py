@@ -52,10 +52,16 @@ class Cadence:
         return self.globe + self.dolly + self.chart
 
 
+# The key plate got longer when the type got bigger. Fifteen seconds was
+# right for a static list of eleven rows at 5 px; it is not enough to pan a
+# twelve-row list past a window five rows deep and give a visitor time to
+# read any of it. Forty seconds is roughly two seconds a row plus the holds,
+# which is the same reading budget the old plate had -- it just has to be
+# spent sequentially now.
 GALLERY = Cadence(water=18 * 60, globe=3.0, dolly=7.0, chart=8.0,
-                  key=15.0, fade=1.5)
+                  key=40.0, fade=1.5)
 EXHIBIT = Cadence(water=20.0, globe=2.0, dolly=5.0, chart=5.0,
-                  key=11.0, fade=1.0)
+                  key=28.0, fade=1.0)
 
 EXHIBIT_LAPSE = 300.0          # seconds before EXHIBIT falls back to GALLERY
 
@@ -127,7 +133,11 @@ def draw_screen(canvas, screen, t_into, eco, track, coast, view, cad):
         render_map(canvas, coast, track, eco.t, map_radius(t_into, cad),
                    chrome=view.plate)
     elif screen == KEY:
-        render_key(canvas, eco, track, eco.t, chrome=view.plate)
+        # the plate pans over its whole dwell, so it needs to know how long
+        # that is and how far in we are. Both come from the cadence, so the
+        # pan speed follows the schedule rather than being tuned against it.
+        render_key(canvas, eco, track, eco.t, chrome=view.plate,
+                   t_into=t_into, dwell=cad.key)
     else:
         render(eco, canvas, view, track, eco.t)
 

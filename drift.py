@@ -182,12 +182,26 @@ class Canvas:
     a packed 1bpp buffer of W*H/8 bytes -- 12 kB at 240x400 -- and only these
     primitives need rewriting."""
 
-    __slots__ = ("w", "h", "buf")
+    __slots__ = ("w", "h", "buf", "cx0", "cy0", "cx1", "cy1")
 
     def __init__(self, w, h):
         self.w = w
         self.h = h
         self.buf = bytearray(w * h)
+        self.cx0 = self.cy0 = 0
+        self.cx1, self.cy1 = w, h          # exclusive
+
+    def clip(self, x0=None, y0=None, x1=None, y1=None):
+        """Set the drawable rectangle, or reset it with no arguments.
+
+        Four integers and a comparison per pixel, which is nothing in C, and
+        it is what lets a list scroll under a fixed heading without the list
+        drawing over it. Every primitive goes through px() or line(), so
+        honouring it in those two places covers the whole library."""
+        self.cx0 = 0 if x0 is None else max(0, int(x0))
+        self.cy0 = 0 if y0 is None else max(0, int(y0))
+        self.cx1 = self.w if x1 is None else min(self.w, int(x1))
+        self.cy1 = self.h if y1 is None else min(self.h, int(y1))
 
     def clear(self):
         # bytearray slice assignment is the fastest memset available
@@ -195,8 +209,37 @@ class Canvas:
 
     def px(self, x, y):
         x = int(x); y = int(y)
-        if 0 <= x < self.w and 0 <= y < self.h:
+        if self.cx0 <= x < self.cx1 and self.cy0 <= y < self.cy1:
             self.buf[y * self.w + x] = 1
+
+    def clear_rect(self, x, y, w, h):
+        """Knock a hole in whatever is already drawn.
+
+        A caption over a chart is unreadable if the coastline runs through
+        the letters, and on 1 bit there is no tint to put behind it -- only
+        paper or ink. So the label clears its own ground first, which is what
+        a printed chart does with a legend box and for the same reason."""
+        x0 = max(int(x), self.cx0); y0 = max(int(y), self.cy0)
+        x1 = min(int(x) + int(w), self.cx1); y1 = min(int(y) + int(h), self.cy1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        row = b"\x00" * (x1 - x0)
+        bw = self.w
+        for yy in range(y0, y1):
+            self.buf[yy * bw + x0:yy * bw + x1] = row
+
+    def fill_rect(self, x, y, w, h):
+        """Solid block. Only the scaled font needs it, and it needs it a lot
+        -- a 15x21 glyph at scale 3 is 105 of these -- so it is worth having
+        as a primitive rather than as nine calls to px()."""
+        x0 = max(int(x), self.cx0); y0 = max(int(y), self.cy0)
+        x1 = min(int(x) + int(w), self.cx1); y1 = min(int(y) + int(h), self.cy1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        row = b"\x01" * (x1 - x0)
+        bw = self.w
+        for yy in range(y0, y1):
+            self.buf[yy * bw + x0:yy * bw + x1] = row
 
     def line(self, x0, y0, x1, y1):
         x0 = int(x0); y0 = int(y0); x1 = int(x1); y1 = int(y1)
@@ -206,6 +249,7 @@ class Canvas:
             return
         if (y0 < 0 and y1 < 0) or (y0 >= h and y1 >= h):
             return
+        cx0 = self.cx0; cy0 = self.cy0; cx1 = self.cx1; cy1 = self.cy1
         dx = x1 - x0
         dy = y1 - y0
         sx = 1 if dx >= 0 else -1
@@ -214,7 +258,7 @@ class Canvas:
         dy = dy if dy >= 0 else -dy
         err = dx - dy
         while True:
-            if 0 <= x0 < w and 0 <= y0 < h:
+            if cx0 <= x0 < cx1 and cy0 <= y0 < cy1:
                 buf[y0 * w + x0] = 1
             if x0 == x1 and y0 == y1:
                 break
@@ -352,23 +396,165 @@ FONT = {
 }
 
 
-def text(canvas, x, y, s, spacing=1):
-    """Returns the x cursor after drawing, so labels can be chained."""
+# --- 5x7 font, the one you can actually read ------------------------------
+#
+# The 3x5 above is 5 pixels tall, which on a 119 ppi panel is 1.07 mm. It was
+# fine when the only text was a debug HUD nobody was meant to read from a
+# sofa. It is not fine as the only writing on the object.
+#
+# Written as pictures rather than as numbers because a font typed as column
+# bitmasks cannot be reviewed -- you can only run it and squint. These
+# compile to the same five column bytes per glyph at import, and on the MCU
+# the compile happens at build time and what ships is the same const array.
+_G7 = (
+    ("0", ".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."),
+    ("1", "..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    ("2", ".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    ("3", "#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."),
+    ("4", "...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    ("5", "#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    ("6", "..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."),
+    ("7", "#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."),
+    ("8", ".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    ("9", ".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."),
+    ("A", ".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    ("B", "####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    ("C", ".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."),
+    ("D", "###..", "#..#.", "#...#", "#...#", "#...#", "#..#.", "###.."),
+    ("E", "#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    ("F", "#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    ("G", ".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".####"),
+    ("H", "#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    ("I", ".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    ("J", "..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    ("K", "#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    ("L", "#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    ("M", "#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    ("N", "#...#", "#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#"),
+    ("O", ".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    ("P", "####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    ("Q", ".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    ("R", "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    ("S", ".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    ("T", "#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    ("U", "#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    ("V", "#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    ("W", "#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    ("X", "#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"),
+    ("Y", "#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    ("Z", "#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    (" ", ".....", ".....", ".....", ".....", ".....", ".....", "....."),
+    (".", ".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
+    (",", ".....", ".....", ".....", ".....", ".##..", ".##..", ".#..."),
+    (":", ".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
+    (";", ".....", ".##..", ".##..", ".....", ".##..", ".#...", "#...."),
+    ("'", ".#...", ".#...", ".....", ".....", ".....", ".....", "....."),
+    ('"', "#.#..", "#.#..", ".....", ".....", ".....", ".....", "....."),
+    ("-", ".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    ("/", "....#", "...#.", "..#..", "..#..", ".#...", "#....", "#...."),
+    ("\xb0", ".##..", "#..#.", ".##..", ".....", ".....", ".....", "....."),
+    ("(", "..#..", ".#...", "#....", "#....", "#....", ".#...", "..#.."),
+    (")", "..#..", "...#.", "....#", "....#", "....#", "...#.", "..#.."),
+    ("+", ".....", "..#..", "..#..", "#####", "..#..", "..#..", "....."),
+    ("\xd7", ".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "....."),
+    (">", ".....", ".#...", "..#..", "...#.", "..#..", ".#...", "....."),
+    ("<", ".....", "...#.", "..#..", ".#...", "..#..", "...#.", "....."),
+    ("=", ".....", ".....", "#####", ".....", "#####", ".....", "....."),
+    ("?", ".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
+    ("!", "..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
+    ("%", "##..#", "##..#", "...#.", "..#..", ".#...", "#..##", "#..##"),
+)
+
+
+def _compile7(rows):
+    cols = []
+    for c in range(5):
+        bits = 0
+        for r in range(7):
+            if rows[r][c] == "#":
+                bits |= 1 << r
+        cols.append(bits)
+    return tuple(cols)
+
+
+# A font is (glyphs, width, height). Two of them: the 3x5 for anything that
+# must be tiny, and the 5x7 for everything a person is meant to read.
+FONT3 = ({k: v for k, v in FONT.items()}, 3, 5)
+FONT7 = ({ch: _compile7(rows) for ch, *rows in _G7}, 5, 7)
+
+# Legibility. A cap height wants to be roughly 1/250 of the viewing distance
+# to be comfortable, so at a metre that is 4 mm and at half a metre 2 mm. On
+# a 119 ppi panel, 7 px is 1.5 mm, 14 px is 3.0 and 21 px is 4.5.
+#
+# These are set by eye like SWIM_SCALE and TARGET_FPS -- the arithmetic gives
+# the bracket and the room gives the answer -- so they are tunable in
+# tools/console.py rather than argued for here.
+T_BIG = 3                  # 15 x 21 px, cap 4.5 mm. Names, and the one
+                           # number a passer-by should be able to read.
+T_MED = 2                  # 10 x 14 px, cap 3.0 mm. Everything else.
+
+
+def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None):
+    """Returns the x cursor after drawing, so labels can be chained.
+
+    `scale` replicates each font pixel into a scale x scale block, which is
+    the only enlargement that suits a 1-bit panel: anything smoother needs
+    grey it does not have."""
+    glyphs, gw, gh = font or FONT7
+    blank = glyphs[" "]
+    step = (gw + spacing) * scale
     for ch in s.upper():
-        g = FONT.get(ch)
-        if g is None:
-            g = FONT[" "]
-        for col in range(3):
+        g = glyphs.get(ch, blank)
+        for col in range(gw):
             bits = g[col]
-            for row in range(5):
+            if not bits:
+                continue
+            for row in range(gh):
                 if bits & (1 << row):
-                    canvas.px(x + col, y + row)
-        x += 3 + spacing
+                    if scale == 1:
+                        canvas.px(x + col, y + row)
+                    else:
+                        canvas.fill_rect(x + col * scale, y + row * scale,
+                                         scale, scale)
+        x += step
     return x
 
 
-def text_width(s, spacing=1):
-    return len(s) * (3 + spacing) - spacing
+def text_width(s, spacing=1, scale=T_MED, font=None):
+    _, gw, _ = font or FONT7
+    return len(s) * ((gw + spacing) * scale) - spacing * scale
+
+
+def text_height(scale=T_MED, font=None):
+    _, _, gh = font or FONT7
+    return gh * scale
+
+
+def label(canvas, x, y, s, scale=None, spacing=1, font=None, pad=3):
+    """Text with its own ground cleared. Returns the x cursor.
+
+    Everything written over the chart goes through this. Over the water it
+    is unnecessary and harmless; over a coastline it is the difference
+    between a caption and a smudge."""
+    scale = T_MED if scale is None else scale
+    w = text_width(s, spacing, scale, font)
+    h = text_height(scale, font)
+    canvas.clear_rect(x - pad, y - pad, w + 2 * pad, h + 2 * pad)
+    return text(canvas, x, y, s, spacing, scale, font)
+
+
+def fit_scale(s, avail, spacing=1, font=None, hi=None, lo=1):
+    """The largest scale at which `s` fits in `avail` pixels.
+
+    Species names run from SALPA to COSCINODISCUS and the column is one
+    width, so either the layout is designed around the longest name -- which
+    wastes the plate on every other row -- or the type shrinks to fit. This
+    is the second, and it is what a real plate does too."""
+    hi = T_BIG if hi is None else hi
+    for sc in range(hi, lo - 1, -1):
+        if text_width(s, spacing, sc, font) <= avail:
+            return sc
+    return lo
 
 
 # --------------------------------------------------------------------------
@@ -2491,29 +2677,27 @@ class View:
     bare paper. On the hardware this whole object collapses to two bits in a
     config byte and `toggle_clean` becomes the KEY button."""
 
-    __slots__ = ("plate", "hud", "chemo", "snow", "_saved")
+    __slots__ = ("plate", "chemo", "snow", "_saved")
 
-    def __init__(self, plate=True, hud=True, chemo=True, snow=True):
+    def __init__(self, plate=True, chemo=True, snow=True):
         self.plate = plate
-        self.hud = hud
         self.chemo = chemo
         self.snow = snow
         self._saved = None
 
     @property
     def clean(self):
-        return not (self.plate or self.hud)
+        return not self.plate
 
     def toggle_clean(self):
         """Remembers what was on, so leaving clean mode restores the exact
         view you had rather than a default."""
         if self.clean:
-            self.plate, self.hud = self._saved or (True, True)
+            self.plate = self._saved if self._saved is not None else True
             self._saved = None
         else:
-            self._saved = (self.plate, self.hud)
+            self._saved = self.plate
             self.plate = False
-            self.hud = False
 
 
 _STIPPLE = None
@@ -2579,69 +2763,55 @@ def render(eco, canvas, view=DEFAULT_VIEW, track=None, day=None):
 
     if view.plate:
         draw_plate(eco, canvas, track, day)
-    if view.hud:
-        draw_hud(eco, canvas)
 
 
 def draw_plate(eco, c, track=None, day=None):
-    """The footer, and nothing else.
+    """The footer, and nothing else -- now at a size that can be read.
 
-    This used to be a full plate -- double border, depth scale with numbered
-    ticks, a tide staff. All of it went. The borderless views turned out to
-    look better than the framed one, and once the border is gone the depth
-    scale has nothing to sit against and reads as clutter. What survives is
-    the three things you actually want to know: what this is, where it is,
-    and how far through.
+    This used to be a full plate (double border, depth scale, tide staff),
+    then a two-line 3x5 caption. Both are gone for the same reason: on a
+    4.2in panel at 119 ppi, 5-pixel type is a millimetre tall, which is a
+    decoration of writing rather than writing. What is left is four things,
+    each big enough to read from across a room, and nothing else:
 
-    The progress bar is a hairline with a single tick, because the number of
-    days is not interesting and the proportion is.
+        the voyage        who is sailing
+        AT SEA / ANCHORED what is happening now
+        lat and lon       where
+        the bar           how far through
 
-    Two lines, and the columns mean something: identity on the left, state on
-    the right. So the eye learns in a day that the right-hand column is where
-    the answer to 'where are we and what are we doing' lives."""
-    y = H - 24
-    text(c, 8, y, track.voyage.title if track is not None else "DRIFT")
-
-    if track is not None and day is not None:
+    The debug HUD that used to sit over the water is deleted, not hidden.
+    Nine lines of instrumentation at 1 mm was the only thing on this panel
+    that assumed a reader with their nose against the glass."""
+    if track is None or day is None:
+        lab = date_label(eco.t)
+        f = (eco.t % 365.25) / 365.25
+        st = pos = None
+    else:
         la, lo = track.position(day)
-        pos = "%02d%s%02d'%s  %03d%s%02d'%s" % (
+        lab = track.voyage.title
+        st = track.status(day)
+        pos = "%d%s%02d'%s  %d%s%02d'%s" % (
             abs(int(la)), "\xb0", int(abs(la) % 1 * 60), "N" if la >= 0 else "S",
             abs(int(lo)), "\xb0", int(abs(lo) % 1 * 60), "E" if lo >= 0 else "W")
-        text(c, W - 8 - text_width(pos), y, pos)
-        st = track.status(day)
-        text(c, W - 8 - text_width(st), y + 9, st)
         f = day / track.days[-1]
-    else:
-        # standing at Melbourn, no voyage: fall back to the date
-        text(c, W - 8 - text_width(date_label(eco.t)), y, date_label(eco.t))
-        f = (eco.t % 365.25) / 365.25
 
-    by = H - 6
-    c.line(8, by, W - 9, by)
-    x = 8 + (W - 17) * f
-    c.line(x, by - 3, x, by + 1)
+    m = 10
+    by = H - 12                                   # the progress bar
+    line_h = text_height(T_MED) + 5
+    y = by - 9 - line_h * (2 if pos else 1)
 
+    sc = fit_scale(lab, W - 2 * m)
+    text(c, m, y - text_height(sc) - 5, lab, scale=sc)
+    if st:
+        text(c, m, y, st, scale=T_MED)
+    if pos:
+        text(c, W - m - text_width(pos, scale=T_MED), y, pos, scale=T_MED)
 
-def draw_hud(eco, c):
-    e = eco.env
-    surf = e.surface_light(eco.t)
-    nsurf = eco.no3[0] + eco.nh4[0]
-    lines = [
-        "T %s  Y%d" % (date_label(eco.t), int(eco.t / 365.25) + 1),
-        "LIGHT %3d  CLOUD %3d" % (int(surf * 100), int(e.cloud * 100)),
-        "MLD %3dM  MIX %3d" % (int(e.mixed_layer_depth(eco.t)),
-                               int(e.mixing(eco.t) * 100)),
-        "TIDE %+4d PX/D" % int(e.current(eco.t, 0.0)),
-        "NO3 %4.1f  NH4 %4.1f" % (eco.no3[0], eco.nh4[0]),
-        "SURF N %4.1f" % nsurf,
-        "CHEMO %4.1f" % eco.nit_total,
-        "BIOM %5.1f  DET %2d" % (eco.biomass, len(eco.det)),
-        "N %2d  HET %2d" % (len(eco.agents), eco.n_zoo),
-    ]
-    y = 26
-    for ln in lines:
-        text(c, 12, y, ln)
-        y += 8
+    c.line(m, by, W - m - 1, by)
+    x = m + (W - 2 * m - 1) * f
+    c.line(x, by - 4, x, by + 2)
+    c.line(m, by - 2, m, by + 2)
+    c.line(W - m - 1, by - 2, W - m - 1, by + 2)
 
 
 # --------------------------------------------------------------------------
@@ -2721,7 +2891,7 @@ def stills(outdir):
     os.makedirs(outdir, exist_ok=True)
     eco = Ecosystem(seed=7, start_day=1.0)
     canvas = Canvas(W, H)
-    view = View(hud=False)
+    view = View()
     targets = [30, 105, 135, 175, 240, 320]
     saved = []
     i = 0
@@ -2802,8 +2972,6 @@ def preview():
                     toast = 1.4
                 elif e.key == pygame.K_c:
                     view.toggle_clean()
-                elif e.key == pygame.K_h:
-                    view.hud = not view.hud
                 elif e.key == pygame.K_p:
                     view.plate = not view.plate
                 elif e.key == pygame.K_n:
@@ -2854,12 +3022,11 @@ def preview():
 
         comp.frame(canvas, rot, eco, track, coast, view)
         status = speed_label(speed) + ("  PAUSED" if paused else "")
-        if view.hud:
-            text(canvas, 12, H - 38, status)
-        elif toast > 0.0:
-            # clean mode keeps its own counsel, except for a moment after you
-            # touch the wheel
-            text(canvas, 8, H - 10, status)
+        if toast > 0.0:
+            # the panel keeps its own counsel, except for a moment after you
+            # touch the wheel. Drawn over the footer rather than beside it,
+            # because at this type size there is no beside left.
+            label(canvas, 10, H - 30, status, scale=T_MED)
 
         # blit the 1-bit buffer via numpy -- a per-pixel Python loop here
         # costs ~96k operations a frame and stutters badly
@@ -2899,7 +3066,7 @@ def voyage_sweep(outdir, every=30, seed=7, log_every=10, voyage="drake"):
         print("no data/ocean.bin -- running on the latitudinal stopgap")
     eco = Ecosystem(seed=seed, start_day=0.0, track=track, ocean=ocean)
     canvas = Canvas(W, H)
-    view = View(hud=False)
+    view = View()
     total = track.days[-1]
 
     # The contact sheet wants a panel a month; the statistics want three

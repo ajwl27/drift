@@ -27,14 +27,18 @@ asleep.
 # MEASURED  -  this machine, CPython 3.11, day 300 of the Drake voyage
 # --------------------------------------------------------------------------
 #
-#   e = Ecosystem(seed=5, ...) spun to day 300, 43 agents
-#   timeit(lambda: e.step(dt))                        -> 1.47 ms
-#   timeit(lambda: draw_screen(c, WATER, ...))        -> 2.01 ms
-#   timeit(lambda: draw_screen(c, MAP, ...))          -> 8.41 ms
-#   timeit(lambda: draw_screen(c, KEY, ...))          -> 1.65 ms
+#   e = Ecosystem(seed=5, ...) spun to day 300, 41 agents, 300 x 400 panel
+#   timeit(lambda: e.step(dt))                        -> 1.73 ms
+#   timeit(lambda: draw_screen(c, WATER, ...))        -> 2.61 ms
+#   timeit(lambda: draw_screen(c, MAP, ...))          -> 11.62 ms
+#   timeit(lambda: draw_screen(c, KEY, ...))          -> 3.53 ms
 #
-SIM_MS = 1.47
-REN_MS = {"water": 2.01, "map": 8.41, "key": 1.65}
+# Re-measured after the legibility pass. Everything went up, and the type is
+# most of why: a glyph at scale 3 is 105 filled pixels where it used to be
+# about 8, so the key plate more than doubled. It is still 0.7% of the
+# cadence, so it moves the average by nothing.
+SIM_MS = 1.73
+REN_MS = {"water": 2.61, "map": 11.62, "key": 3.53}
 
 # GALLERY cadence, from screens.py: water 1080 s, map 18 s, water 1080 s,
 # key 15 s. The map costs four times the water view and occupies 0.8% of the
@@ -143,7 +147,7 @@ BOARDS = (
 # move when the design does. DEFAULT_PX is the panel actually being built
 # for, which is now the 4.2in 300x400 on the ESP32-S3-RLCD-4.2.
 PANELS = (("2.7in, 240x400", 240, 400), ("4.2in, 300x400", 300, 400))
-REF_PX = 240 * 400
+REF_PX = 300 * 400          # the frame costs above are now measured HERE
 DEFAULT_PX = 300 * 400
 
 # CELLS. Capacity is nominal; usable is lower cold and lower after a few
@@ -198,10 +202,8 @@ def main():
     print("Frame: sim %.2f + render %.2f (cadence-weighted) = %.2f ms in "
           "CPython\n" % (SIM_MS, render_ms(), SIM_MS + render_ms()))
 
-    print("Panel: %d x %d, the 4.2in RLCD. Frame costs were measured on the"
-          % (300, 400))
-    print("240 x 400 and scaled by pixel count, which is x%.2f.\n"
-          % (DEFAULT_PX / REF_PX))
+    print("Panel: 300 x 400, the 4.2in RLCD, and where the frame costs were")
+    print("measured. Other panels are scaled from it by pixel count.\n")
     print("=== 1. Frame rate against battery life, one 18650 (3000 mAh) ===\n")
     print("%-20s %7s %8s %9s %9s %7s %14s  %s"
           % ("", "duty", "MCU mA", "panel mA", "total mA", "days",

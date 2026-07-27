@@ -1029,6 +1029,131 @@ Ranked by probability × damage.
 
 ---
 
+## 10l. Legibility — **the type, the HUD, and a plate that moves**
+
+Looked at from across the room at true size, the plankton and the chart read
+and every word did not. Measured rather than guessed: the font was 3 × 5, so
+five pixels tall, which on a 119 ppi panel is **1.07 mm**. A cap height wants
+to be roughly 1/250 of the viewing distance to be comfortable — 4 mm at a
+metre, 2 mm at half a metre. It was out by a factor of two to four.
+
+### A font you can read
+
+A new **5 × 7 face**, written as pictures rather than as column bitmasks,
+because a font typed as numbers cannot be reviewed — you can only run it and
+squint. It compiles to the same five bytes per glyph at import, and on the MCU
+the compile happens at build time and what ships is the same `const` array.
+Fifty-six glyphs, 280 bytes.
+
+`text()` takes a `scale` that replicates each font pixel into a block, which is
+the only enlargement a 1-bit panel can do — anything smoother needs grey it
+does not have. Two sizes are in use:
+
+| | px | cap height | chars across 300 px |
+|---|---|---|---|
+| `T_BIG` = 3 | 15 × 21 | **4.5 mm** | 16 |
+| `T_MED` = 2 | 10 × 14 | **3.0 mm** | 25 |
+
+Three new primitives came with it, all trivial in C and all earning their
+place: `fill_rect` (a scale-3 glyph is 105 filled pixels — worth having as a
+primitive rather than 105 calls to `px`), `clear_rect`, and `clip`.
+
+`label()` is `clear_rect` then `text` — a caption over a chart is unreadable
+if the coastline runs through the letters, and on 1 bit there is no tint to
+put behind it, only paper or ink. So the label clears its own ground, which is
+what a printed chart does with a legend box and for the same reason.
+
+`fit_scale()` returns the largest size at which a string fits its column.
+Species names run from SALPA to COSCINODISCUS and the column is one width, so
+either the layout is designed around the longest name — wasting the plate on
+every other row — or the type shrinks to fit. A real plate does the second.
+
+### The HUD is deleted, not hidden
+
+Nine lines of instrumentation at 1 mm was the only thing on the panel that
+assumed a reader with their nose against the glass. It went, along with
+`View.hud`. What is left on the water screen is four things, each big enough
+to read from a sofa:
+
+    the voyage          who is sailing          T_BIG, fitted
+    AT SEA / ANCHORED   what is happening now   T_MED
+    lat and lon         where                   T_MED
+    the bar             how far through
+
+### The key plate moves
+
+At the old size eleven rows fitted. At a readable size **five** do, and the
+census routinely runs to twelve or thirteen taxa. Three options: show the top
+five and lie by omission; shrink the type back and lie about legibility; or
+move.
+
+It moves. A **slow eased pan** from the top of the list to the bottom, with a
+hold at each end, over exactly the dwell the cadence gives it. Not a loop — a
+loop has no beginning, so a visitor arriving mid-cycle never knows whether
+they have seen the whole thing. A pan that starts at the top and stops at the
+bottom has both ends, and the holds are what make it read as a considered
+movement rather than a slipping belt. If the list fits, nothing moves at all,
+which is the common case in a gyre.
+
+The pan is driven from the cadence rather than tuned against it, so the two
+cannot drift apart. The key's dwell went **15 s → 40 s** in GALLERY: two
+seconds a row plus the holds, which is the same reading budget the old plate
+had — it just has to be spent sequentially now.
+
+Everything else on the plate was re-cut to fit the type rather than the other
+way round. `TEXT_X = 56` is set by COSCINODISCUS: thirteen characters at
+`T_BIG` is 234 px, which is exactly what `W - 10 - 56` leaves. Roles are
+capped at nineteen characters — what the same column buys at `T_MED` — and
+double spaces went, because they bought a typographic nicety that does not
+survive being 3 mm tall. Specimens are drawn about 1.6× larger and then
+**clamped** against `EXTENT`, which is what stops a Chaetoceros chain, eight
+radii long, from lying across the species name.
+
+The voyage block (elapsed, to go, next port) moved off the plate to the water
+screen, which is where it belongs: that screen is up 98% of the time and this
+one is up for forty seconds.
+
+### The specimens swim
+
+A key plate with static drawings is a poster. The whole argument for this
+object over a print is that the organisms move, and the plate is where a
+visitor looks hardest at any one of them — so it is the last place that should
+be still.
+
+The pose comes from **the same gait constants as the water** (§10h): the
+tintinnid on the plate corkscrews at the tintinnid rate, the copepod hops at
+the copepod rate, and the diatoms only turn in shear because diatoms only turn
+in shear. Nothing here is decoration invented for the plate. The helix gets a
+gentle surge a quarter cycle out of phase with its yaw, so it reads as
+swimming rather than as a windscreen wiper; the hop gets impulse-then-decay,
+which is the water's velocity curve one integration further on, because here
+it is displacement being drawn.
+
+One difference: these are **deterministic** where the water's are stochastic.
+A specimen in a display case swims on the spot and comes back; a Poisson
+process would have it wander off the row.
+
+### What it cost
+
+| | before | after |
+|---|---|---|
+| simulation step | 1.47 ms | 1.73 |
+| render, water | 2.01 | 2.61 |
+| render, chart | 8.41 | 11.62 |
+| render, key plate | 1.65 | **3.53** |
+| cadence-weighted frame | 3.53 | **4.42** |
+
+The key plate more than doubled, which is the type: a glyph at scale 3 is 105
+filled pixels where it used to be about 8. It is 0.7% of the cadence, so it
+moves the average by nothing. At 20 fps the whole legibility pass costs about
+two days of battery life on one cell — 25 down to 23 — which is the cheapest
+thing bought in this project so far.
+
+`docs/screens_legible.png` is every screen; `docs/key_pan.png` is the plate at
+four points in its pan.
+
+---
+
 ## 10k. The hardware — **the Waveshare board, and what it changes**
 
 ### Can it run from USB-C? Yes.

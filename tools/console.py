@@ -68,6 +68,7 @@ from drift import (Canvas, W, H, Ecosystem, View,               # noqa: E402
 from mapview import (Coast, R_GLOBE, R_CHART, zoom_radius,     # noqa: E402
                      render_map)
 from screens import draw_screen, WATER, MAP, KEY, GALLERY      # noqa: E402
+from keyplate import render_key                                # noqa: E402
 from voyage import Track                                       # noqa: E402
 from keyplate import NAMES                                     # noqa: E402
 from ocean import Ocean                                        # noqa: E402
@@ -247,6 +248,7 @@ class Side:
         self.acc = 0.0
         self.prev_ang = {}
         self.prev_pos = {}
+        self.key_t = 0.0         # where the key plate's pan has got to
         self.spin = 0.0          # deg per rendered frame, smoothed
         self.speed = 0.0         # px/s, smoothed
         self.frames = 0
@@ -336,7 +338,7 @@ def run(seed=5, day=420.0):
     track = Track("drake")
     ocean = Ocean("data/ocean.bin")
     coast = Coast("data/coast.bin")
-    view = View(plate=False, hud=True)
+    view = View(plate=True)
     true_size = False
     live = None                 # set below; panel_px() only reads it once
                                 # true_size is on, which cannot be before then
@@ -439,9 +441,7 @@ def run(seed=5, day=420.0):
                ("A/B", (x0 + 212, PAD, 54, 24), split)]
         y2 = PAD + 28
         top += [("plate", (x0, y2, 56, 22), view.plate),
-                ("hud", (x0 + 62, y2, 48, 22), view.hud)]
-        if scr != MAP:
-            top.append(("1:1 size", (x0 + 116, y2, 70, 22), true_size))
+                ("1:1 size", (x0 + 62, y2, 70, 22), true_size)]
         yb = win_h() - PAD - 24
         bot = [("reset", (x0, yb, 66, 24), False),
                ("reseed", (x0 + 72, yb, 74, 24), False),
@@ -449,7 +449,7 @@ def run(seed=5, day=420.0):
                ("pause", (x0 + 228, yb, 66, 24), paused)]
         if scr == MAP:
             for i, nm in enumerate(("globe", "dolly", "chart")):
-                top.append((nm, (x0 + 120 + i * 62, y2, 56, 22), zoom == i))
+                top.append((nm, (x0 + 138 + i * 62, y2, 56, 22), zoom == i))
         return top, bot, w0
 
     def hit(pt, box):
@@ -562,8 +562,6 @@ def run(seed=5, day=420.0):
                         scr = KEY
                     elif label == "plate":
                         view.plate = not view.plate
-                    elif label == "hud":
-                        view.hud = not view.hud
                     elif label == "1:1 size":
                         true_size = not true_size
                         screen = pygame.display.set_mode(size(split))
@@ -623,8 +621,6 @@ def run(seed=5, day=420.0):
                     zoom = (zoom + 1) % 3
                 elif ev.key == pygame.K_c:
                     view.plate = not view.plate
-                elif ev.key == pygame.K_h:
-                    view.hud = not view.hud
                 elif ev.key == pygame.K_t:
                     true_size = not true_size
                     screen = pygame.display.set_mode(size(split))
@@ -674,6 +670,15 @@ def run(seed=5, day=420.0):
                     # for as long as you like and look at it
                     render_map(side.canvas, coast, track, side.eco.t, R,
                                chrome=view.plate)
+                elif scr == KEY:
+                    # drive the pan from a wall clock the console owns, so
+                    # you can watch a whole pass without waiting for the
+                    # cadence to come round to it
+                    side.key_t = (getattr(side, "key_t", 0.0)
+                                  + 1.0 / side.st["fps"]) % GALLERY.key
+                    render_key(side.canvas, side.eco, track, side.eco.t,
+                               chrome=view.plate, t_into=side.key_t,
+                               dwell=GALLERY.key)
                 else:
                     draw_screen(side.canvas, scr,
                                 GALLERY.duration(scr) * 0.5, side.eco,
@@ -760,7 +765,7 @@ def run(seed=5, day=420.0):
                      "backspace  reset this one",
                      "",
                      "1 2 3    water / map / key      z  map zoom",
-                     "c  plate  h  hud  t  true size  space  pause  r  seed",
+                     "c  plate   t  true size   space  pause   r  seed",
                      "tab      A/B split against a saved copy",
                      "e        export to docs/tuned_values.txt",
                      "shift+R  reset every parameter"):

@@ -16,11 +16,14 @@ Canvas only. Ports with everything else.
 
 import math
 
-from drift import (Canvas, W, H, text, text_width, DRAW, DRIFTER_KINDS,
+from drift import (Canvas, W, H, text, text_width, text_height, fit_scale,
+                   T_BIG, T_MED, DRAW, DRIFTER_KINDS,
                    HET_KINDS, EXTENT, Genome, COPEPOD, draw_copepod,
                    RADIOLARIAN, CENTRIC, PENNATE, CHAIN, CERATIUM, TINTINNID,
                    COCCO, FLAGELLATE, THALASSIO, RHIZO, CORETHRON,
-                   ACANTHARIA, FORAM, ORNITHO, TRICHO, SALP, KRILL)
+                   ACANTHARIA, FORAM, ORNITHO, TRICHO, SALP, KRILL,
+                   GAIT, HELIX, HOP, CRUISE, HELIX_HZ, HELIX_YAW, HOP_HZ,
+                   COAST_S, SWIM_SCALE, TUMBLE_S)
 import random
 
 NAMES = {
@@ -46,57 +49,135 @@ NAMES = {
 
 # Second line under each name: what it does for a living. Three words, so a
 # visitor gets the ecology without being lectured.
+# Nineteen characters is the hard limit: that is what W - 10 - TEXT_X buys
+# at T_MED, and a role that has to shrink to fit is a role nobody reads. The
+# double spaces went for the same reason -- they cost two characters and
+# bought a typographic nicety that does not survive being 3 mm tall.
 ROLES = {
-    RADIOLARIAN: "MIXOTROPH  DRIFTS",
-    CENTRIC: "DIATOM  SINKS",
-    PENNATE: "DIATOM  GLIDES",
-    CHAIN: "DIATOM  CHAINS",
-    CERATIUM: "MIXOTROPH  SWIMS",
-    COPEPOD: "GRAZER  MIGRATES",
-    TINTINNID: "GRAZER  FILTERS",
-    COCCO: "PLATED  DRIFTS",
-    FLAGELLATE: "NANOPLANKTON  SWIMS",
-    THALASSIO: "DIATOM  BEADS",
-    RHIZO: "DIATOM  NEEDLES",
-    CORETHRON: "DIATOM  POLAR",
-    ACANTHARIA: "MIXOTROPH  RADIATES",
-    FORAM: "MIXOTROPH  CHAMBERED",
-    ORNITHO: "MIXOTROPH  SAILS",
-    TRICHO: "FIXES  NITROGEN",
-    SALP: "GRAZER  FILTERS",
-    KRILL: "GRAZER  SWARMS",
+    RADIOLARIAN: "MIXOTROPH DRIFTS",
+    CENTRIC: "DIATOM SINKS",
+    PENNATE: "DIATOM GLIDES",
+    CHAIN: "DIATOM CHAINS",
+    CERATIUM: "MIXOTROPH SWIMS",
+    COPEPOD: "GRAZER MIGRATES",
+    TINTINNID: "GRAZER FILTERS",
+    COCCO: "PLATED DRIFTS",
+    FLAGELLATE: "NANOPLANKTON SWIMS",
+    THALASSIO: "DIATOM BEADS",
+    RHIZO: "DIATOM NEEDLES",
+    CORETHRON: "DIATOM POLAR",
+    ACANTHARIA: "MIXOTROPH RADIATES",
+    FORAM: "MIXOTROPH CHAMBERED",
+    ORNITHO: "MIXOTROPH SAILS",
+    TRICHO: "FIXES NITROGEN",
+    SALP: "GRAZER FILTERS",
+    KRILL: "GRAZER SWARMS",
 }
 
-ROW_H = 34
-SPEC_X = 24          # centre of the specimen column
-TEXT_X = 56
-NUM_W = 16           # right-hand column, four characters of abundance
+# Laid out for type you can read from a sofa rather than type that fits.
+# At T_BIG a name is 21 px tall and at T_MED a role is 14, so a row is 66
+# where it used to be 34 -- five rows on the panel instead of eleven, which
+# is why the plate now moves.
+ROW_H = 66
+SPEC_X = 28          # centre of the specimen column
+TEXT_X = 56          # set by the longest name: COSCINODISCUS is thirteen
+                     # characters, which at T_BIG is 234 px, which is exactly
+                     # what W - 10 - 56 leaves. The column is the type, not
+                     # the other way round.
+SPEC_HALF = 26       # nothing in the specimen column may reach further than
+                     # this from its centre, or it climbs into the name
+NUM_W = 44           # right-hand column, four characters of abundance
 
 # Drawing radius per type for the key column, hand-set rather than derived.
 # EXTENT is a separation radius and is deliberately isotropic, so it does not
 # describe a Chaetoceros chain, which is compact across its axis and up to
 # twelve radii long down it. A plate key is a composed object; composing it
 # by hand is the honest way to do it.
-KEY_R = {
-    RADIOLARIAN: 8.0, CENTRIC: 9.5, PENNATE: 10.0, CHAIN: 3.2,
-    CERATIUM: 7.5, COPEPOD: 9.5, TINTINNID: 8.0,
-    COCCO: 9.0, FLAGELLATE: 6.5, THALASSIO: 3.4, RHIZO: 4.5,
-    CORETHRON: 5.5, ACANTHARIA: 9.5, FORAM: 6.5, ORNITHO: 8.0,
-    TRICHO: 5.5, SALP: 3.6, KRILL: 6.0,
+# Hand-set, then clamped. The hand-set value is the one that makes a row
+# look right; the clamp is what stops a Chaetoceros chain -- eight radii long
+# and compact across -- from lying across the species name. EXTENT is the
+# separation radius and is deliberately isotropic, so it overstates the
+# round ones and understates nothing, which makes it the safe thing to clamp
+# against.
+_KEY_R_WANT = {
+    RADIOLARIAN: 13.0, CENTRIC: 15.0, PENNATE: 16.0, CHAIN: 5.2,
+    CERATIUM: 12.0, COPEPOD: 15.0, TINTINNID: 13.0,
+    COCCO: 14.0, FLAGELLATE: 10.5, THALASSIO: 5.4, RHIZO: 7.2,
+    CORETHRON: 9.0, ACANTHARIA: 15.0, FORAM: 10.5, ORNITHO: 13.0,
+    TRICHO: 9.0, SALP: 5.8, KRILL: 9.5,
 }
+KEY_R = {k: min(r, SPEC_HALF / max(EXTENT.get(k, 1.5), 0.5))
+         for k, r in _KEY_R_WANT.items()}
+
+# --------------------------------------------------------------------------
+# the specimens swim
+# --------------------------------------------------------------------------
+#
+# A key plate with static drawings is a poster. The whole argument for this
+# object over a print is that the organisms move, and the plate is where a
+# visitor is looking hardest at any one of them -- so it is the last place
+# that should be still.
+#
+# The pose comes from the SAME gait constants as the water (drift.py, 10h),
+# which is the point: the tintinnid on the plate corkscrews at the tintinnid
+# rate, the copepod hops at the copepod rate, and the diatoms only turn in
+# shear because diatoms only turn in shear. Nothing here is decoration
+# invented for the plate.
+#
+# The one difference is that these are DETERMINISTIC where the water's are
+# stochastic. A specimen in a display case swims on the spot and comes back;
+# a Poisson process would have it wander off the row.
+
+BASE_ANG = -0.35           # the angle every specimen was drawn at before
 
 
-def _specimen(c, kind, cx, cy, seed=1):
+def specimen_pose(kind, t):
+    """(angle, forward offset in radii) for a specimen swimming on the spot.
+
+    `t` is real seconds. Everything is expressed in ANIMAL time and then
+    slowed by SWIM_SCALE, exactly as the water is, so the plate and the
+    panel behind it are running at the same speed."""
+    slow = SWIM_SCALE
+    ta = t * slow                                  # animal seconds
+    gait = GAIT.get(kind)
+    if gait == HELIX:
+        f = HELIX_HZ[kind]
+        yaw = HELIX_YAW[kind]
+        ph = 2.0 * math.pi * f * ta
+        # the corkscrew, seen edge-on: a yaw oscillation, and a gentle surge
+        # a quarter cycle out of phase so it reads as swimming rather than
+        # as a windscreen wiper
+        return BASE_ANG + yaw * math.sin(ph), 0.32 * math.cos(ph)
+    if gait == HOP:
+        period = 1.0 / (HOP_HZ[kind] * slow)
+        coast = COAST_S[kind] / slow
+        ph = (t % period) / max(coast, 1e-3)
+        # impulse then decay: the same shape the water's velocity takes, one
+        # integration further on because here it is displacement being drawn
+        surge = math.exp(-ph) * (1.0 - math.exp(-ph * 6.0))
+        return BASE_ANG - 0.10 * surge, 0.9 * surge - 0.25
+    if gait == CRUISE:
+        return BASE_ANG + 0.05 * math.sin(2.0 * math.pi * 0.35 * ta), 0.0
+    # not a swimmer: turning in shear, and nothing else. Slow enough that a
+    # radiolarian takes most of a minute to show you a new face, which is
+    # about right for a thing that has no say in the matter.
+    return BASE_ANG + 2.0 * math.pi * (t % TUMBLE_S) / TUMBLE_S, 0.0
+
+
+def _specimen(c, kind, cx, cy, seed=1, t=0.0):
     """One drawn individual, sized so every row occupies the same column.
-    A stable seed per row keeps the specimen from shimmering between
-    frames."""
+    A stable seed per row keeps the specimen from shimmering between frames;
+    the pose is the only thing allowed to change."""
     rng = random.Random(seed * 7919 + kind)
     g = Genome(kind, rng)
-    r = KEY_R.get(kind, 9.0)
+    r = KEY_R.get(kind, 14.0)
+    ang, fwd = specimen_pose(kind, t)
+    dx = fwd * r * math.cos(ang)
+    dy = fwd * r * math.sin(ang)
     if kind == COPEPOD:
-        draw_copepod(c, cx, cy, r, -0.35, g, False)
+        draw_copepod(c, cx + dx, cy + dy, r, ang, g, False)
     else:
-        DRAW[kind](c, cx, cy, r, -0.35, g)
+        DRAW[kind](c, cx + dx, cy + dy, r, ang, g)
 
 
 # --------------------------------------------------------------------------
@@ -166,12 +247,15 @@ def abundance_bar(c, x0, y, wpx, x):
     k = 1
     while k <= dec + 0.001:
         tx = x0 + wpx * (k / dec)
-        c.line(tx, y - 2, tx, y)
+        c.line(tx, y - 3, tx, y)
         k += 1
     f = max(0.0, min(1.0, math.log10(max(x, 1.0)) / dec))
-    c.line(x0, y + 2, x0 + max(1.0, wpx * f), y + 2)
-    c.line(x0, y + 1, x0, y + 3)
-    c.line(x0 + max(1.0, wpx * f), y + 1, x0 + max(1.0, wpx * f), y + 3)
+    fx = x0 + max(2.0, wpx * f)
+    # a filled bar rather than a hairline: at this size a one-pixel rule
+    # under a one-pixel rule reads as a printing fault
+    c.fill_rect(x0, y + 2, max(2.0, wpx * f), 3)
+    c.line(x0, y + 1, x0, y + 6)
+    c.line(fx, y + 1, fx, y + 6)
 
 
 def _hms_days(d):
@@ -181,68 +265,103 @@ def _hms_days(d):
     return "%dD" % r
 
 
-def draw_progress(c, track, day, y0=12):
-    """Where we are, how long we have been, how long is left, and what is
-    next. Four lines, and the fourth is the one people actually care about."""
-    la, lo = track.position(day)
-    total = track.days[-1]
-    port, away = track.next_port(day)
-    ns = "N" if la >= 0 else "S"
-    ew = "E" if lo >= 0 else "W"
+def draw_header(c, track, day, y0=8):
+    """One line of context and nothing more.
 
-    text(c, 10, y0, track.voyage.subtitle[:38])
-    text(c, 10, y0 + 9, "%02d%s%02d'%s   %03d%s%02d'%s"
-         % (abs(int(la)), "\xb0", int(abs(la) % 1 * 60), ns,
-            abs(int(lo)), "\xb0", int(abs(lo) % 1 * 60), ew))
-    text(c, 10, y0 + 18, track.status(day)[:38])
-    # 'ELAPSED', not 'AT SEA' -- that phrase now means something else one line
-    # up, and two meanings for one label on the same plate is a bug.
-    text(c, 10, y0 + 27, "ELAPSED %s" % _hms_days(day))
-    text(c, 10, y0 + 36, "TO GO   %s" % _hms_days(total - day))
-    text(c, 10, y0 + 45, "NEXT    %s %dD" % (port[:13], int(away)))
-
-    # progress bar: the voyage as a line, with a mark where we are
-    bx0, bx1, by = 10, W - 11, y0 + 57
-    c.line(bx0, by, bx1, by)
-    c.line(bx0, by - 2, bx0, by + 2)
-    c.line(bx1, by - 2, bx1, by + 2)
-    px = bx0 + (bx1 - bx0) * (day / total)
-    c.line(px, by - 4, px, by + 4)
-    # ticks at each anchorage, so the bar shows the shape of the voyage
-    here = None
-    for wp in track.wp:
-        p = (wp[1], wp[2])
-        if p == here:
-            x = bx0 + (bx1 - bx0) * (wp[0] / total)
-            c.line(x, by - 2, x, by + 2)
-        here = p
-    return by + 10
+    The voyage block -- lat, lon, elapsed, to go, next port -- moved to the
+    water screen, which is where it belongs: that screen is up 98% of the
+    time and this one is up for fifteen seconds. Repeating it here at a size
+    you can read would eat half the plate and leave room for two species,
+    and two species is not a census."""
+    n = None
+    sc = fit_scale(track.voyage.title, W - 20)
+    text(c, 10, y0, track.voyage.title, scale=sc)
+    y = y0 + text_height(sc) + 6
+    text(c, 10, y, track.status(day)[:24], scale=T_MED)
+    return y + text_height(T_MED) + 6
 
 
-def render_key(canvas, eco, track, day, chrome=True, w=W, h=H):
+# --------------------------------------------------------------------------
+# the plate, and why it moves
+# --------------------------------------------------------------------------
+#
+# At the old type size eleven rows fitted. At a size a person can read from
+# a sofa, five do -- and the census routinely has ten or twelve taxa in it,
+# so something has to give. The options were: show the top five and lie by
+# omission; shrink the type back and lie about legibility; or move.
+#
+# It moves. A slow pan from the top of the list to the bottom, with a hold
+# at each end, over exactly the time the plate is on screen. Not a loop: a
+# loop has no beginning, so a visitor who arrives mid-cycle never knows
+# whether they have seen the whole thing. A pan that starts at the top and
+# stops at the bottom has both, and the holds are what make it read as a
+# considered movement rather than a slipping belt.
+#
+# If the list fits, nothing moves at all. That is the common case in a gyre,
+# and a plate that jiggles when it has no need to would be the worst of both.
+
+PAN_HOLD = 0.22            # fraction of the dwell spent still, at each end
+
+
+def _pan(t_into, dwell, span):
+    """Pixels to shift the list up, given how far into the plate's dwell we
+    are. Eased, because a linear pan starts and stops with a visible jerk."""
+    if span <= 0 or dwell <= 0:
+        return 0.0
+    f = max(0.0, min(1.0, t_into / dwell))
+    f = (f - PAN_HOLD) / max(1e-6, 1.0 - 2.0 * PAN_HOLD)
+    f = max(0.0, min(1.0, f))
+    return span * f * f * (3.0 - 2.0 * f)
+
+
+def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,
+               t_into=0.0, dwell=0.0, t=None):
     canvas.clear()
-    y = draw_progress(canvas, track, day) if chrome else 10
+    t = eco.t * 86400.0 if t is None else t     # real seconds, for the gaits
+
+    top = draw_header(canvas, track, day) if chrome else 10
+    canvas.line(10, top, w - 11, top)
+    top += 8
 
     rows = census(eco)
-    canvas.line(10, y, w - 11, y)
-    y += 4
+    bot = h - 10
     if chrome:
-        text(canvas, TEXT_X, y, "ABUNDANCE X SCARCEST")
-        y += 8
+        bot -= text_height(T_MED) + 12
 
-    bar_w = w - 11 - NUM_W - 4 - TEXT_X
-    max_rows = int((h - y - 14) // ROW_H)
-    for i, (kind, n, mass, x) in enumerate(rows[:max_rows]):
-        cy = y + ROW_H // 2
-        _specimen(canvas, kind, SPEC_X, cy, seed=i + 1)
-        text(canvas, TEXT_X, cy - 11, NAMES.get(kind, "?"))
-        text(canvas, TEXT_X, cy - 3, ROLES.get(kind, ""))
-        abundance_bar(canvas, TEXT_X, cy + 8, bar_w, x)
+    span = max(0.0, len(rows) * ROW_H - (bot - top))
+    off = _pan(t_into, dwell, span)
+
+    bar_w = w - 10 - NUM_W - 8 - TEXT_X
+    canvas.clip(0, top, w, bot)
+    for i, (kind, n, mass, x) in enumerate(rows):
+        ry = top - off + i * ROW_H
+        if ry > bot or ry + ROW_H < top:
+            continue                            # off the plate, skip the work
+        cy = ry + ROW_H // 2
+        _specimen(canvas, kind, SPEC_X, cy, seed=i + 1, t=t)
+        name = NAMES.get(kind, "?")
+        nsc = fit_scale(name, w - 10 - TEXT_X)
+        text(canvas, TEXT_X, ry + 4, name, scale=nsc)
+        ty = ry + 4 + text_height(nsc) + 4
+        role = ROLES.get(kind, "")
+        # lo=T_MED, not lo=1: if a role ever outgrows its column the right
+        # answer is to shorten the words, not to print them at a size that
+        # defeats the point of this whole pass
+        text(canvas, TEXT_X, ty, role,
+             scale=fit_scale(role, w - 10 - TEXT_X, hi=T_MED, lo=T_MED))
+        by = ty + text_height(T_MED) + 9
+        abundance_bar(canvas, TEXT_X, by, bar_w, x)
         lab = abundance_label(x)
-        text(canvas, w - 11 - text_width(lab), cy + 6, lab)
-        y += ROW_H
+        text(canvas, w - 10 - text_width(lab, scale=T_MED), by - 4, lab,
+             scale=T_MED)
+    canvas.clip()
 
-    if chrome and len(rows) > max_rows:
-        text(canvas, 10, h - 12, "AND %d MORE" % (len(rows) - max_rows))
-    elif chrome:
-        text(canvas, 10, h - 12, "%d TAXA" % len(rows))
+    if chrome:
+        # the fade marks: a hairline at whichever end has more list behind it,
+        # so it is obvious the plate is a window onto something longer
+        if off > 1.0:
+            canvas.line(w // 2 - 8, top + 1, w // 2 + 8, top + 1)
+        if off < span - 1.0:
+            canvas.line(w // 2 - 8, bot - 2, w // 2 + 8, bot - 2)
+        text(canvas, 10, h - 10 - text_height(T_MED),
+             "%d TAXA IN THIS WATER" % len(rows), scale=T_MED)
