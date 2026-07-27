@@ -29,9 +29,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from drift import (Ecosystem, SWIM_BL, TARGET_FPS, H, W, Z_MAX,  # noqa: E402
-                   TOP_M, BOT_M, visual_radius)
-from keyplate import NAMES                                  # noqa: E402
+from drift import (Ecosystem, TARGET_FPS, H, W, Z_MAX,          # noqa: E402
+                   TOP_M, BOT_M)
+import fish as F                                              # noqa: E402
 from voyage import Track                                    # noqa: E402
 from ocean import Ocean                                     # noqa: E402
 
@@ -48,22 +48,27 @@ def sample(seed=5, day=START_DAY, seconds=SECONDS, fps=None):
     while eco.t < day:
         eco.step(1.0 / 6.0)
 
-    watch = [a for a in eco.agents if a.g.kind in SWIM_BL]
-    trk = {id(a): {"kind": a.g.kind, "r": visual_radius(a),
-                   "xz": [(a.x, a.z)], "ang": [a.ang]} for a in watch}
+    watch = list(eco.agents)
+    trk = {id(a): {"kind": a.key, "r": 0.5 * F.draw_length(F.BY_KEY[a.key], a.jit),
+                   "xz": [(a.x, a.z)], "ang": [a.body]} for a in watch}
 
     dt_days = (1.0 / fps) * 60.0 / 86400.0
     for _ in range(2 * fps):
         # two seconds of warm-up, thrown away. The spin-up above runs in
         # coarse steps, which take the diffusive branch, so the first real-time
         # frames are a transient rather than the gait.
-        eco.step(dt_days)
-    trk = {id(a): {"kind": a.g.kind, "r": visual_radius(a),
-                   "xz": [(a.x, a.z)], "ang": [a.ang]}
+        #
+        # advance(), not step(). Since the ecology and the swimming were
+        # split, step() is the ecology alone -- a motion checker driving it
+        # measures a population that never moves, and duly reported every
+        # speed as 0.0 and every tortuosity as nan.
+        eco.advance(dt_days)
+    trk = {id(a): {"kind": a.key, "r": 0.5 * F.draw_length(F.BY_KEY[a.key], a.jit),
+                   "xz": [(a.x, a.z)], "ang": [a.body]}
            for a in watch if a in eco.agents}
     watch = [a for a in watch if id(a) in trk]
     for _ in range(int(seconds * fps)):
-        eco.step(dt_days)
+        eco.advance(dt_days)
         # an agent that dies stops being stepped but the reference here stays
         # valid, so it would contribute a frozen tail and quietly halve the
         # measured speed. Drop it at the moment it leaves the population.
@@ -73,7 +78,7 @@ def sample(seed=5, day=START_DAY, seconds=SECONDS, fps=None):
                 continue
             t = trk[id(a)]
             t["xz"].append((a.x, a.z))
-            t["ang"].append(a.ang)
+            t["ang"].append(a.body)
         watch = [a for a in watch if id(a) in live]
     return {i: t for i, t in trk.items() if len(t["xz"]) > 2 * fps}, fps
 
@@ -141,10 +146,10 @@ def report(out, fps):
           "default)\n" % (fps, SECONDS))
     print("%-16s %5s %8s %8s %9s %9s" %
           ("", "BL/s", "px/s", "spin/fr", "tort 1s", "tort 30s"))
-    for k in sorted(out, key=lambda k: -SWIM_BL[k]):
+    for k in sorted(out, key=lambda k: -F.BY_KEY[k].swim_bl):
         r = out[k]
         print("%-16s %5.1f %8.1f %7.1f' %9.2f %9.2f" %
-              (NAMES.get(k, str(k)), SWIM_BL[k], _med(r["v"]),
+              (F.BY_KEY[k].common, F.BY_KEY[k].swim_bl, _med(r["v"]),
                _med(r["spin"]), _med(r["t1"]), _med(r["t30"])))
     print()
     print("spin/fr is degrees of drawn-body rotation between consecutive")
@@ -168,7 +173,7 @@ def frame_rate_check(seed=5, day=START_DAY, seconds=120.0):
     eco.time_compression = 60.0
     while eco.t < day:
         eco.step(1.0 / 6.0)
-    base = [a for a in eco.agents if a.g.kind in SWIM_BL]
+    base = list(eco.agents)
     if not base:
         print("no swimmers at day %.0f" % day)
         return
@@ -194,7 +199,6 @@ def frame_rate_check(seed=5, day=START_DAY, seconds=120.0):
             for h in fan:
                 c = copy.deepcopy(a)
                 c.head = c.body = h
-                c.vel = 0.0
                 ags.append(c)
         eco.agents = ags
         # NET displacement, not path length. Path length is not the right
@@ -215,13 +219,13 @@ def frame_rate_check(seed=5, day=START_DAY, seconds=120.0):
                 prev[i] = (a.x, a.z)
         for i, a in enumerate(ags):
             net[i] = math.hypot(wind[i], (a.z - start[i][1]) * ZPX)
-            rows.setdefault(a.g.kind, {}).setdefault(fps, []).append(
+            rows.setdefault(a.key, {}).setdefault(fps, []).append(
                 net[i] / seconds)
     worst = 0.0
-    for k in sorted(rows, key=lambda k: -SWIM_BL[k]):
+    for k in sorted(rows, key=lambda k: -F.BY_KEY[k].swim_bl):
         v = [sum(rows[k][f]) / len(rows[k][f]) for f in (10, 20, 40)]
         worst = max(worst, (max(v) - min(v)) / max(v[1], 1e-9))
-        print("%-16s %s" % (NAMES.get(k, str(k)),
+        print("%-16s %s" % (F.BY_KEY[k].common,
                             "   ".join("%13.2f" % x for x in v)))
     print("\nmean net px/s over the heading fan. Worst spread %.1f%%, and it"
           % (100 * worst))
