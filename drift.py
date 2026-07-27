@@ -95,12 +95,14 @@ Z_MAX = 1000.0             # metres of water column mapped to the panel height
 Z0 = 200.0 / 3.0           # the log axis knee -- see above
 Z_SUN = 200.0              # the epipelagic boundary, drawn as a hairline
 
-MAX_AGENTS = 34            # render cost lives here
-MESO_N = 10                # mesopelagic slots when the water is fully
-                           # suitable for them. Near-constant by design: this
-                           # community is the same under a gyre and under an
-                           # upwelling, which is the whole reason it is
-                           # allocated separately from the sunlit half.
+MAX_AGENTS = 56            # render cost lives here, and it is now the only
+                           # thing standing between the panel and a Humboldt
+                           # anchovy shoal. Raised from 34 because the count
+                           # comes from the ecology rather than from a budget:
+                           # at AB_N_MAX = 50 the richest water asks for more
+                           # than the panel can hold, and what happens then is
+                           # a proportional scale-down rather than a
+                           # truncation -- see _shares().
 N_FLOOR = 6                # THE PANEL IS NEVER BARE, and in a gyre this is
                            # not a fallback: the mesopelagic is never empty,
                            # lanternfish are the most abundant vertebrates on
@@ -130,19 +132,81 @@ N_FLOOR = 6                # THE PANEL IS NEVER BARE, and in a gyre this is
 # enough to be seen. It is a deliberate lie about magnitude and an honest one
 # about direction, and the key plate's abundance bar is where the magnitude
 # gets told properly.
-ABUND_EXP = 0.22
+# THE TWO ANCHORS, MEASURED OVER THE WHOLE VOYAGE.
+#
+# tools/check_biogeography.py calibrate runs all 1018 days and reports the
+# scarcest a species ever gets while still being present, and the richest any
+# species ever gets. Those two are mapped to one fish and to AB_N_MAX fish,
+# and everything between is log-interpolated.
+#
+# Measured, not chosen, which is the whole argument for doing it this way: the
+# scheme this replaced normalised suitability into a share of a panel budget
+# that was itself a compressed function of capacity, so the number of fish on
+# the panel was three judgements deep and none of them could be checked
+# against anything.
+#
+#   AB_LO   0.494   a lone bluefin off Cape Virgenes, day 254
+#   AB_HI   2345    Argentine anchovy on the Patagonian shelf, day 164
+#
+# LINEAR BETWEEN THEM, and the first attempt at this was logarithmic and
+# wrong. The abundance distribution is strongly right-skewed -- the median
+# species scores 92 against a maximum of 2345 -- so a log map lifts the whole
+# middle of the distribution toward the top of the count range. Every water on
+# the track then asked for more fish than the panel could hold, everything got
+# scaled back to the cap, and the gyre and the Humboldt came out identically
+# full: the one comparison the piece exists to make, erased by an interpolation
+# curve.
+#
+# Linear keeps the skew. A mid-abundance species draws three or four fish and
+# fifty is reserved for something that genuinely swarms, which is what a shoal
+# of anchovy on the Patagonian shelf actually is.
+AB_LO = 1.5
+AB_HI = 4082.0
+AB_N_MAX = 50              # fish drawn for the richest a species ever gets
+
 TROPHIC_REF = 2.5          # the base of the pyramid, near a pure planktivore
-CAP_EXP = 0.45             # n_visible goes as capacity^0.45
-CAP_SCALE = 5.4            # SET BY THE TWO ENDS OF THE TRACK, not by taste.
-                           # The South Pacific gyre and the Humboldt are the
-                           # poorest and richest water Drake crosses, and
-                           # their capacities come out at 1.9 and 37.8, so
-                           # capacity^0.45 puts them 4.5-fold apart. Scaling
-                           # that so the Humboldt fills the panel at 32 fish
-                           # leaves the gyre at 7 -- which is the ratio the
-                           # panel can actually show, and CAP_SCALE is what
-                           # it takes. At 21.0 both ends clipped at MAX_AGENTS
-                           # and the whole voyage looked identically full.
+TURNOVER_EXP = 0.5         # BIOMASS PYRAMIDS ARE SHALLOWER THAN PRODUCTION
+                           # PYRAMIDS, and leaving this out is what made a
+                           # shelf read as one species.
+                           #
+                           # The trophic term is about PRODUCTION -- how much
+                           # new tissue a level makes. What stands in the
+                           # water is production divided by turnover, and a
+                           # hake turns over perhaps three times more slowly
+                           # than an anchovy, so it accumulates. P/B falls
+                           # with body size roughly as L^-0.5, so standing
+                           # biomass carries L^+0.5 against pure production.
+                           #
+                           # Measured against the case that exposed it: on the
+                           # Patagonian shelf the production ratio of anchovy
+                           # to hake is about 44 to 1 and the observed
+                           # standing-stock ratio is nearer 5 to 1. The
+                           # turnover term closes most of that gap, and it
+                           # closes it with a mechanism rather than a fudge
+                           # factor.
+TROPHIC_DECADE = 0.8       # DECADES OF BIOMASS LOST PER TROPHIC LEVEL, and
+                           # 1.0 -- the textbook ten per cent -- is the top of
+                           # the measured range rather than the middle of it.
+                           # Pauly and Christensen 1995 put the global mean
+                           # near 10%, but with wide variation and with
+                           # productive shelf and upwelling systems markedly
+                           # higher; 0.8 decades is 16%, which is inside that
+                           # range and is where the shelf systems this track
+                           # crosses actually sit.
+                           #
+                           # At 1.0 the Argentine anchovy took 98% of the
+                           # Patagonian shelf, because it sits exactly at the
+                           # reference level and everything else on that shelf
+                           # is a decade and a half above it. A forage fish
+                           # dominating a shelf is real -- anchoita biomass
+                           # there genuinely exceeds hake by several times --
+                           # but 98% is the exponent talking, not the ocean.
+# CAP_EXP, CAP_SCALE, ABUND_EXP and MESO_N were here. All four were invented
+# constants used to turn suitability into a panel budget and then to divide
+# that budget between two depth bands. They are replaced by AB_LO/AB_HI above,
+# which are measurements, and by the band term inside abundance(), which is a
+# mechanism. Four fewer numbers, and the two that remain can be re-derived by
+# anyone who runs the calibration.
 
 # --- how fast the community changes ---------------------------------------
 #
@@ -190,6 +254,8 @@ TURN_SCALE = 1.0           # multiplier on every TURN_TAU
 BODY_TAU = 0.45            # seconds for the body to swing to a new heading
 SHOAL_TAU = 30.0           # seconds before a shoal's collective heading
                            # decorrelates. Long: a shoal commits.
+VERT_MAX = 8.0             # metres a fish may swim vertically in one step,
+                           # whatever the speed control is doing
 VERT_DAMP = 0.18           # how much of a fish's swimming goes into depth.
                            # Low on purpose -- the depth axis belongs to the
                            # diel migration and the species' own band, and a
@@ -1008,8 +1074,8 @@ class Ecosystem:
         self.env = Environment(self.rng, track, ocean)
         self.agents = []
         self.assemblage = []          # [(key, suitability)], richest first
-        self.share = {}               # key -> fraction of the panel it should
-                                      # hold, from suitability x abundance
+        self.ab = {}                  # key -> standing biomass here
+        self.want = {}                # key -> fish to draw, from that biomass
         self.have = {}                # key -> smoothed present count
         self.shoal_head = {}          # key -> the shoal's collective heading
         self.swim_scale = SWIM_SCALE
@@ -1073,76 +1139,107 @@ class Ecosystem:
             self.assemblage = [(k, 0.05) for k in F.MESOPELAGIC]
         self._shares()
 
-    def _weight(self, key, s):
-        """Suitability times the abundance term.
+    def abundance(self, key, suit):
+        """Standing biomass of one species in this water, on the absolute
+        scale the whole voyage shares.
 
-        10^-(T - 2.5) is the trophic pyramid; L^-3 is numbers at a fixed
-        biomass; the exponent compresses the product so the panel can show
-        both ends of it. See ABUND_EXP, where the compression is argued for."""
+        Four terms and every one of them is a mechanism:
+
+            suitability   the envelope. Whether the water suits it at all.
+            band          epipelagic biomass tracks productivity over three
+                          orders of magnitude; mesopelagic biomass is
+                          near-uniform ocean-wide. This is the one term that
+                          knows which half of the panel a species lives in,
+                          and it is why a gyre reads as a full deep layer
+                          under an empty sunlit one without anything
+                          allocating the two halves separately.
+            trophic       decades of biomass lost per trophic level.
+            turnover      ...offset by the fact that slow-growing predators
+                          accumulate, so a biomass pyramid is shallower than
+                          a production pyramid.
+
+        Used for BOTH the plate's bar and the number of fish drawn, which is
+        the point: there is one statement about how much of something is
+        here, and the renderer and the census are two views onto it rather
+        than two independent guesses."""
         f = F.BY_KEY[key]
-        n = (10.0 ** -(f.trophic - TROPHIC_REF)) / (f.len_common ** 3)
-        return s * (n ** ABUND_EXP)
+        band = MESO_BIOMASS if key in F.MESOPELAGIC else max(0.02, self.prod)
+        return (suit * band
+                * (10.0 ** (-TROPHIC_DECADE * (f.trophic - TROPHIC_REF)))
+                * (f.len_common / 20.0) ** TURNOVER_EXP
+                * A_SCALE)
 
     def _shares(self):
-        """How much of the panel each species should hold.
+        """How many of each species to draw.
 
-        ALLOCATED IN TWO BANDS, AND THAT IS THE CORRECTION THAT MATTERED.
+        INTERPOLATED FROM THE ECOLOGY BETWEEN TWO MEASURED ANCHORS, which
+        replaced four hand-set exponents and a two-band slot allocation with
+        one line and two numbers that were measured rather than chosen.
 
-        Allocated as one pool, hatchetfish and bristlemouths took the whole
-        panel almost everywhere on the track -- they are tiny, so the size
-        term favours them, and they suit nearly every water, so their
-        suitability is near one wherever it is deep. Off Peru they crowded
-        out the anchoveta; in the Moluccas they crowded out the reef.
+        The old scheme normalised suitability into a share of a panel budget,
+        and that budget was itself a compressed function of capacity. It
+        worked, but it meant the number of fish on the panel was three
+        judgements deep and none of them could be checked against anything.
 
-        But the panel is a VERTICAL SECTION, and those species live in the
-        bottom half of it. Competing for the same slots as a sardine is not
-        something they do in the sea and not something they should do here.
+        This asks a question with an answer instead: run the whole voyage,
+        find the scarcest a species ever gets while still being present and
+        the richest it ever gets, and map those two to one fish and to
+        AB_N_MAX fish. Everything between is log-interpolated -- log because
+        the span is 3.7 decades and a linear map would draw one fish for
+        everything that is not the Humboldt.
 
-        So the two bands are allocated separately, and the rule for each is
-        the real one:
-
-            mesopelagic   near-constant everywhere. Mesopelagic biomass is
-                          famously uniform across the world ocean -- it is
-                          the one fish community that barely knows whether
-                          it is under a gyre or an upwelling.
-            epipelagic    scales with productivity, hard. This is the half
-                          that empties out in a gyre and fills in the
-                          Humboldt, which is the single thing the water
-                          screen is trying to say.
-
-        A gyre therefore reads as a full deep layer under an empty sunlit
-        one, which is exactly what a gyre is."""
-        epi = [(k, s) for k, s in self.assemblage if k not in F.MESOPELAGIC]
-        meso = [(k, s) for k, s in self.assemblage if k in F.MESOPELAGIC]
-
-        n_meso = 0
-        if meso:
-            suit = sum(s for _, s in meso)
-            n_meso = int(round(min(MESO_N, MESO_N * suit / 2.5)))
-            n_meso = max(2, n_meso)
-        n_epi = 0
-        if epi:
-            cap = (sum(s for _, s in epi)
-                   * max(0.05, self.prod) * self.season * 12.0)
-            n_epi = int(round(CAP_SCALE * (cap ** CAP_EXP))) if cap > 0 else 0
-        total = max(N_FLOOR, min(MAX_AGENTS, n_meso + n_epi))
-        # trim the surface half first if the pair overflows the panel: the
-        # deep layer is the one that is there whatever the water is doing
-        if n_meso + n_epi > total:
-            n_epi = max(0, total - n_meso)
-        self.n_want = total
-        self.n_band = (n_epi, n_meso)
-
-        self.share = {}
-        for group, n in ((epi, n_epi), (meso, n_meso)):
-            if not group or n <= 0:
+        What this buys, beyond having two fewer invented constants: the count
+        on the panel and the bar on the key plate are now the SAME quantity,
+        so a species whose bar is one decade longer than another's is drawn
+        correspondingly more often. They cannot disagree, because there is
+        only one number."""
+        self.ab = {k: self.abundance(k, s) for k, s in self.assemblage}
+        want = {}
+        for k, ab in self.ab.items():
+            if ab <= 0.0:
                 continue
-            raw = {k: self._weight(k, s) for k, s in group}
-            tot = sum(raw.values())
-            if tot <= 0.0:
-                continue
-            for k, v in raw.items():
-                self.share[k] = (v / tot) * (float(n) / total)
+            # BIOMASS PER INDIVIDUAL DRAWN, which is the quantity a count
+            # should come from, and it is not biomass itself.
+            #
+            # Straight biomass put eighteen whale sharks in the Humboldt.
+            # Not because the metric was wrong about whale sharks -- a filter
+            # feeder at trophic 3.6 that weighs ten tonnes really does carry
+            # a lot of biomass per individual -- but because a count is a
+            # number of ANIMALS and biomass is not.
+            #
+            # The panel is a fixed area, and what the eye reads as "how full
+            # of fish" is ink, not tonnage. Ink goes as the drawn area of an
+            # individual, and drawn length goes as L^SIZE_EXP, so area goes
+            # as L^(2*SIZE_EXP) = L^0.8. Dividing by that makes the ink on
+            # the panel proportional to the biomass in the water, which is
+            # the honest thing for a picture of the sea to be proportional
+            # to. One whale shark then says what eighteen were failing to.
+            ink = (F.BY_KEY[k].len_common / 20.0) ** (2.0 * F.SIZE_EXP)
+            f = (ab / ink - AB_LO) / (AB_HI - AB_LO)
+            want[k] = max(1, int(round(1.0 + (AB_N_MAX - 1)
+                                       * max(0.0, min(1.0, f)))))
+
+        # THE PANEL HAS A BUDGET AND THE OCEAN DOES NOT. Scaled down
+        # proportionally rather than truncated, so an over-full Humboldt
+        # keeps its proportions and merely gets smaller -- truncation would
+        # drop the rarest species entirely, which is precisely the
+        # information the plate exists to carry.
+        total = sum(want.values())
+        if total > MAX_AGENTS:
+            k_scale = float(MAX_AGENTS) / total
+            want = {k: max(1, int(round(v * k_scale))) for k, v in want.items()}
+            # rounding up to a floor of one can push it back over; shave the
+            # largest until it fits
+            while sum(want.values()) > MAX_AGENTS and len(want) < MAX_AGENTS:
+                big = max(want, key=lambda k: want[k])
+                if want[big] <= 1:
+                    break
+                want[big] -= 1
+        self.want = want
+        self.n_want = sum(want.values())
+        self.n_band = (sum(v for k, v in want.items()
+                           if k not in F.MESOPELAGIC),
+                       sum(v for k, v in want.items() if k in F.MESOPELAGIC))
 
     # -- the population ----------------------------------------------------
 
@@ -1166,13 +1263,31 @@ class Ecosystem:
         was drawn below a seabed that was visibly right there on the panel."""
         return max(12.0, min(Z_MAX - 1.0, self.bottom * 0.97))
 
+    def depth_of(self, f, r, floor=None):
+        """Where one individual sits, given that the sea has a bottom.
+
+        A species asked for water deeper than there is does NOT get stacked
+        on the seabed. That was the first version and in 71 m of Port St
+        Julian it put every deep-living species at exactly the floor, inside
+        the hatching, so the panel read as empty water over a shaded band
+        with nothing in it -- while the census cheerfully reported nine
+        species.
+
+        Instead the band is rescaled into the lower half of the water that
+        actually exists, spread by the individual's rank. A grenadier over a
+        shallow shelf is near the bottom of it, which is true, and it is
+        visibly near the bottom rather than buried in it."""
+        if floor is None:
+            floor = self.z_floor()
+        z = F.swim_depth(f, self.sun, r)
+        if z > floor:
+            z = floor * (0.55 + 0.40 * r)
+        return max(self.Z_MIN, min(floor, z))
+
     def _spawn(self, key, instant=False):
         f = F.BY_KEY[key]
         r = self.rng.random()
-        a = Agent(key, self.rng.uniform(0, W),
-                  max(self.Z_MIN,
-                      min(F.swim_depth(f, self.sun, r), self.z_floor())),
-                  r, self.rng)
+        a = Agent(key, self.rng.uniform(0, W), self.depth_of(f, r), r, self.rng)
         if instant:
             a.vis = 1.0
         self.agents.append(a)
@@ -1192,26 +1307,12 @@ class Ecosystem:
     def _wanted(self):
         """key -> integer count the water wants right now.
 
-        Largest-remainder allocation rather than rounding each share
-        independently: rounding gives a total that drifts from n_want by
-        several fish, and on a panel carrying six of them in a gyre that is
-        the difference between sparse and empty."""
-        if not self.share:
-            return {}
-        exact = {k: v * self.n_want for k, v in self.share.items()}
-        out = {k: int(v) for k, v in exact.items()}
-        left = self.n_want - sum(out.values())
-        if left > 0:
-            rem = sorted(exact, key=lambda k: -(exact[k] - int(exact[k])))
-            for k in rem[:left]:
-                out[k] += 1
-        # anything the water clearly holds gets at least one individual, or a
-        # species can be present in the census and invisible in the water,
-        # which reads as a bug in the plate
-        for k, v in self.share.items():
-            if v > 0.10 and out.get(k, 0) == 0:
-                out[k] = 1
-        return out
+        Computed in _shares() straight from the abundance, so this is now
+        only an accessor. It used to do largest-remainder allocation of a
+        panel budget across normalised shares, which is what you have to do
+        when the count is a share of a total rather than a quantity in its
+        own right."""
+        return self.want
 
     def _relax(self, dt):
         """Move the population toward what the water wants, at TURNOVER_D."""
@@ -1277,7 +1378,7 @@ class Ecosystem:
         # the single most recognisable behaviour in the sea.
         floor = self.z_floor()
         sk = math.sqrt(min(dt_s, 4.0 * SHOAL_TAU) / SHOAL_TAU)
-        for key in self.share:
+        for key in self.want:
             h = self.shoal_head.get(key)
             if h is None:
                 h = rng.uniform(0.0, 2.0 * math.pi)
@@ -1296,8 +1397,7 @@ class Ecosystem:
             # constant is in panel seconds because it is a drawing rate: the
             # real ascent takes about an hour, and at one second per second
             # so does this one.
-            z_want = max(self.Z_MIN,
-                         min(F.swim_depth(f, self.sun, a.r), floor))
+            z_want = self.depth_of(f, a.r, floor)
             a.z += (z_want - a.z) * (1.0 - math.exp(-dt_s / 900.0))
 
             if dt_s >= tau:
@@ -1318,9 +1418,28 @@ class Ecosystem:
 
             a.body += _wrap_pi(a.head - a.body) * body_k
             a.x = (a.x + v0 * dt_s * math.cos(a.body)) % W
-            a.z = max(self.Z_MIN, min(floor,
-                               a.z + v0 * dt_s * math.sin(a.body) * VERT_DAMP
-                               * (Z_MAX / H)))
+            # VERTICAL SWIMMING, CONVERTED THROUGH THE LOG AXIS.
+            #
+            # The first version multiplied a displacement in pixels by
+            # Z_MAX/H, which is 2.5 m per pixel -- the conversion for a
+            # LINEAR depth axis. This one is logarithmic, so a pixel is
+            # about 0.6 m at the surface and 5 m at 500 metres, and a flat
+            # 2.5 was four times too coarse in the top of the column.
+            #
+            # What it looked like: at Port St Julian, in 71 m of water, an
+            # entire 45-fish anchovy shoal sank onto the seabed within a
+            # second and stayed there, drawn inside the hatching. The census
+            # said nine species and the panel showed bare water.
+            #
+            # The step is also capped. Below the heading decorrelation time
+            # this branch is ballistic, and a large dt -- which is what the
+            # speed control produces at 1 DAY/SEC, and what a headless sweep
+            # produces every step -- would otherwise move a fish the whole
+            # depth of the ocean between one sample and the next.
+            m_per_px = (Z0 + a.z) * _LOGSPAN / float(H - TOP_M - BOT_M)
+            dz = v0 * dt_s * math.sin(a.body) * VERT_DAMP * m_per_px
+            dz = max(-VERT_MAX, min(VERT_MAX, dz))
+            a.z = max(self.Z_MIN, min(floor, a.z + dz))
 
     # -- the clock ---------------------------------------------------------
 
@@ -1363,12 +1482,29 @@ class Ecosystem:
     # -- what the plate asks ----------------------------------------------
 
     def census(self):
-        """[(key, count, suitability, abundance), ...], richest first.
+        """[(key, count, suitability, biomass), ...], richest first.
 
-        The count is what is DRAWN and the abundance is what the model
-        BELIEVES -- and they are deliberately different numbers. The drawn
-        count is compressed so a gyre is watchable; the abundance is not, and
-        it is what the plate's bar reports."""
+        The count is what is DRAWN and the biomass is what the model
+        BELIEVES. They are deliberately different numbers: the drawn count is
+        compressed so a gyre is watchable, and the plate's bar reports the
+        uncompressed quantity.
+
+        BIOMASS, NOT NUMBERS, and that correction came from the checker
+        rather than from looking at the panel. Reported as numerical density
+        the uncompressed quantity carries a 1/L^3 term, so a 3 cm
+        bristlemouth outweighs a 14 cm anchoveta a hundred to one and the
+        plate said every water on Earth was sixty per cent hatchetfish --
+        the Humboldt, the Moluccas and the North Sea alike. Which is not even
+        wrong: bristlemouths really are the most abundant vertebrates there
+        are, and a census that says so about every ocean has told you nothing
+        about any of them.
+
+        Biomass is the currency marine ecology actually uses, it is what "the
+        largest fishery on Earth" is a statement about, and it drops the
+        cell-size term entirely. What is left is suitability, the trophic
+        pyramid, and which band the species is in -- so the Humboldt reads
+        anchoveta and the gyre reads mesopelagic, which is the truth about
+        both."""
         tally = {}
         for a in self.agents:
             if a.vis <= 0.03:
@@ -1377,12 +1513,14 @@ class Ecosystem:
         suit = dict(self.assemblage)
         rows = []
         for key, n in tally.items():
-            f = F.BY_KEY[key]
             s = suit.get(key, 0.0)
-            # individuals per unit volume, on one absolute scale across the
-            # whole voyage: suitability times the uncompressed pyramid
-            ab = s * self.prod * (10.0 ** -(f.trophic - TROPHIC_REF)) \
-                * (20.0 / f.len_common) ** 3 * A_SCALE
+            # THE SAME NUMBER THE RENDERER COUNTED FROM, read out of the
+            # cache rather than recomputed. The plate's bar and the number of
+            # fish in the water are now two views of one quantity, so they
+            # cannot disagree.
+            ab = self.ab.get(key)
+            if ab is None:
+                ab = self.abundance(key, s)
             rows.append((key, n, s, ab))
         rows.sort(key=lambda r: -r[3])
         return rows
@@ -1405,6 +1543,13 @@ class Ecosystem:
 # anywhere on the voyage". Measured by tools/check_biogeography.py over the
 # whole track rather than chosen, and baked in here.
 A_SCALE = 4200.0
+
+# Mesopelagic standing stock, as a fraction of what a fully productive
+# surface carries. Near-constant by design and by observation: this is the
+# one fish community that barely knows whether it is under a gyre or an
+# upwelling, which is why in a gyre it is not merely what is left but
+# genuinely most of what is there.
+MESO_BIOMASS = 0.30
 
 
 # --------------------------------------------------------------------------

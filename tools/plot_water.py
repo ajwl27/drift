@@ -42,8 +42,9 @@ def sheet(path, voyage="drake", seed=3, scale=2):
         eco = drift.Ecosystem(seed=seed, start_day=float(day), track=track,
                               ocean=ocean)
         # let the population settle and the fish spread out before drawing
-        for _ in range(40):
-            eco.advance(0.02)
+        eco.time_compression = 60.0
+        for _ in range(240):
+            eco.advance(3.5e-5)
         c = Canvas(W, H)
         render(eco, c, View(), track, eco.t)
         text(c, 6, 6, name, scale=T_MED)
@@ -74,8 +75,9 @@ def dvm(path, voyage="drake", day=49, seed=3, scale=2):
         utc = (hr - lon / 15.0) % 24.0
         eco = drift.Ecosystem(seed=seed, start_day=day + utc / 24.0,
                               track=track, ocean=ocean)
-        for _ in range(30):
-            eco.advance(0.0008)
+        eco.time_compression = 60.0
+        for _ in range(240):
+            eco.advance(3.5e-5)
         c = Canvas(W, H)
         render(eco, c, View(plate=False), track, eco.t)
         text(c, 6, 6, "%02d00 LOCAL  SUN %+.0f" % (hr, eco.sun), scale=T_MED)

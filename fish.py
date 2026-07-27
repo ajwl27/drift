@@ -62,9 +62,9 @@ import draw
 (ANCHOVETA, SARDINE, HERRING, MACKEREL, CHUB, PILCHARD_EU, JACKMACK,
  SKIPJACK, YELLOWFIN, BLUEFIN, WAHOO, MARLIN, DORADO, FLYINGFISH,
  BLUESHARK, WHALESHARK, TREVALLY, GROUPER, FUSILIER,
- COD, HAKE_EU, HAKE_CL, HAKE_ZA, SNOEK, GRENADIER, TOOTHFISH, ICEFISH,
- SILVERFISH,
- LANTERNFISH, WARMING, BRISTLEMOUTH, HATCHETFISH, VIPERFISH) = range(33)
+ COD, HAKE_EU, HAKE_CL, HAKE_ZA, HAKE_AR, ANCHOITA, SNOEK, GRENADIER,
+ TOOTHFISH, ICEFISH, SILVERFISH,
+ LANTERNFISH, WARMING, BRISTLEMOUTH, HATCHETFISH, VIPERFISH) = range(35)
 
 # --- swimming modes -------------------------------------------------------
 #
@@ -439,6 +439,25 @@ ROSTER = (
        prod=(0.20, 0.38, 1.0, 1.0),
        z=(150.0, 450.0), gait=SUBCARANGIFORM, shoal=0.30, swim_bl=1.3),
 
+    # FishBase: 50-800 m (usual 100-200), 4.5-18 C, 50 cm common / 95 cm max,
+    # trophic 4.0, benthopelagic, 20S-56S. The Patagonian shelf's dominant
+    # predator and one of the largest fisheries in the South Atlantic.
+    _f(HAKE_AR, "MERLUCCIUS HUBBSI", "ARGENTINE HAKE", "GADOID", "40-70CM",
+       50.0, 95.0, 4.0,
+       temp=(4.5, 5.5, 12.0, 18.0), habitat=SLOPE,
+       prod=(0.18, 0.34, 1.0, 1.0),
+       z=(100.0, 200.0), gait=SUBCARANGIFORM, shoal=0.30, swim_bl=1.3),
+
+    # FishBase: 30-200 m, 4.6-18.7 C, 10 cm common / 17 cm max, trophic 2.5,
+    # pelagic-neritic, 21S-50S. The Humboldt's anchoveta has an Atlantic
+    # counterpart, and the pair is the clearest case in the roster of the
+    # range table doing its job: near-identical envelopes, opposite coasts.
+    _f(ANCHOITA, "ENGRAULIS ANCHOITA", "ANCHOVY", "ANCHOVY", "8-17CM",
+       10.0, 17.0, 2.5,
+       temp=(4.6, 7.0, 16.0, 18.7), habitat=SHELF,
+       prod=(0.25, 0.42, 1.0, 1.0),
+       z=(30.0, 200.0), gait=SUBCARANGIFORM, shoal=1.00, swim_bl=2.6),
+
     # FishBase: 0-550 m (usual 100-500), 13-18 C, 75 cm common / 200 cm max,
     # trophic 3.6, benthopelagic. Circumpolar in the southern hemisphere,
     # 21S-56S -- the Benguela and the Chilean coast both.
@@ -608,6 +627,8 @@ RANGE = {
     # -- southern hemisphere, circumpolar or nearly so
     SNOEK:       ((-56.0, -21.0), ALL_BASINS),
     GRENADIER:   ((-60.0, -34.0), PACIFIC | ATLANTIC),
+    HAKE_AR:     ((-56.0, -20.0), ATLANTIC),
+    ANCHOITA:    ((-50.0, -21.0), ATLANTIC),
     TOOTHFISH:   ((-66.0, -33.0), ALL_BASINS),
     ICEFISH:     ((-66.0, -48.0), ALL_BASINS),
     SILVERFISH:  ((-78.0, -60.0), ALL_BASINS),
@@ -659,7 +680,8 @@ FORM = {
     FLYINGFISH: draw.EXOCOETID,
     BLUESHARK: draw.SHARK, WHALESHARK: draw.WHALESHARKISH,
     COD: draw.GADOID, HAKE_EU: draw.GADOID, HAKE_CL: draw.GADOID,
-    HAKE_ZA: draw.GADOID, GRENADIER: draw.GRENADIERISH,
+    HAKE_ZA: draw.GADOID, HAKE_AR: draw.GADOID, ANCHOITA: draw.ANCHOVYISH,
+    GRENADIER: draw.GRENADIERISH,
     TOOTHFISH: draw.NOTOTHENIOID, ICEFISH: draw.NOTOTHENIOID,
     SILVERFISH: draw.NOTOTHENIOID,
     SNOEK: draw.GEMPYLID,
