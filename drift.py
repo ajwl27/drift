@@ -494,15 +494,25 @@ T_BIG = 3                  # 15 x 21 px, cap 4.5 mm. Names, and the one
 T_MED = 2                  # 10 x 14 px, cap 3.0 mm. Everything else.
 
 
-def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None):
+def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None, alpha=1.0):
     """Returns the x cursor after drawing, so labels can be chained.
 
     `scale` replicates each font pixel into a scale x scale block, which is
     the only enlargement that suits a 1-bit panel: anything smoother needs
-    grey it does not have."""
+    grey it does not have.
+
+    `alpha` below 1 thins the letterforms through the same 8x8 ordered dither
+    the screen dissolves use. It is not antialiasing -- there is no grey to
+    antialias with -- it is a texture getting denser, and it is how writing
+    arrives on the chart as the camera moves in rather than appearing all at
+    once like a caption card."""
     glyphs, gw, gh = font or FONT7
     blank = glyphs[" "]
     step = (gw + spacing) * scale
+    thr = int(alpha * 64.0)
+    if thr <= 0:
+        return x + step * len(s)
+    solid = thr >= 64
     for ch in s.upper():
         g = glyphs.get(ch, blank)
         for col in range(gw):
@@ -510,12 +520,21 @@ def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None):
             if not bits:
                 continue
             for row in range(gh):
-                if bits & (1 << row):
-                    if scale == 1:
-                        canvas.px(x + col, y + row)
-                    else:
-                        canvas.fill_rect(x + col * scale, y + row * scale,
-                                         scale, scale)
+                if not (bits & (1 << row)):
+                    continue
+                px0 = x + col * scale
+                py0 = y + row * scale
+                if solid and scale > 1:
+                    canvas.fill_rect(px0, py0, scale, scale)
+                elif solid:
+                    canvas.px(px0, py0)
+                else:
+                    for dy in range(scale):
+                        for dx in range(scale):
+                            xx = int(px0) + dx
+                            yy = int(py0) + dy
+                            if BAYER8[yy & 7][xx & 7] < thr:
+                                canvas.px(xx, yy)
         x += step
     return x
 
@@ -530,17 +549,20 @@ def text_height(scale=T_MED, font=None):
     return gh * scale
 
 
-def label(canvas, x, y, s, scale=None, spacing=1, font=None, pad=3):
+def label(canvas, x, y, s, scale=None, spacing=1, font=None, pad=3,
+          alpha=1.0):
     """Text with its own ground cleared. Returns the x cursor.
 
     Everything written over the chart goes through this. Over the water it
     is unnecessary and harmless; over a coastline it is the difference
     between a caption and a smudge."""
     scale = T_MED if scale is None else scale
+    if alpha <= 0.02:
+        return x
     w = text_width(s, spacing, scale, font)
     h = text_height(scale, font)
     canvas.clear_rect(x - pad, y - pad, w + 2 * pad, h + 2 * pad)
-    return text(canvas, x, y, s, spacing, scale, font)
+    return text(canvas, x, y, s, spacing, scale, font, alpha)
 
 
 def trim(s, avail, scale=None, spacing=1, font=None):

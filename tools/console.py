@@ -63,6 +63,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import drift                                                   # noqa: E402
+import keyplate                                                # noqa: E402
 from drift import (Canvas, W, H, Ecosystem, View,               # noqa: E402
                    PANEL_DIAG_IN)
 from mapview import (Coast, R_GLOBE, R_CHART, zoom_radius,     # noqa: E402
@@ -80,7 +81,7 @@ COL = 450                    # width of the control column, set so a
                              # 100 mm calibration ruler fits at a
                              # typical desktop monitor density
 RULER_MM = 100               # the calibration bar's true length. Fixed.
-COLH = 1190                  # the control column's own height: sliders,
+COLH = 1420                  # the control column's own height: sliders,
                              # ruler, legend and footer. In true-size mode
                              # the panel is SMALLER than this, so the window
                              # is sized by the controls and not by the art.
@@ -199,6 +200,20 @@ PARAMS = [
           fmt="%.1f", unit=" s", group="TIMING"),
     Param("chart", "map: chart", 0.0, 24.0, GALLERY.chart, fmt="%.1f",
           unit=" s", group="TIMING"),
+    # The plate's motion is deliberately NOT the water's. See keyplate.py:
+    # the water is a scene watched at a distance, the plate is one specimen
+    # held still with a visitor's whole attention on it while they read its
+    # name, and those want different amounts of movement.
+    Param("krate", "plate: rate", 0.05, 2.0, keyplate.KEY_RATE, log=True,
+          fmt="%.2f", unit="x", group="KEY PLATE"),
+    Param("kyaw", "plate: yaw", 0.0, 2.0, keyplate.KEY_YAW, fmt="%.2f",
+          unit="x", group="KEY PLATE"),
+    Param("ksurge", "plate: sway", 0.0, 2.0, keyplate.KEY_SURGE, fmt="%.2f",
+          unit="x", group="KEY PLATE"),
+    Param("kbeat", "plate: beat", 0.05, 3.0, keyplate.KEY_BEAT, log=True,
+          fmt="%.2f", unit="x", group="KEY PLATE"),
+    Param("kspin", "plate: spin", 30.0, 1800.0, keyplate.KEY_SPIN_S, log=True,
+          fmt="%.0f", unit=" s", group="KEY PLATE"),
 ]
 DEFERRED = ("day", "seed")
 PANEL_PPI = math.hypot(W, H) / PANEL_DIAG_IN
@@ -244,6 +259,16 @@ def apply_state(st, eco):
         drift.HOP_HZ[k] = v * st["prate"]
     for k, v in BASE_COAST.items():
         drift.COAST_S[k] = v * st["pcoast"]
+    # the plate reads these as module constants, which is exactly why the
+    # swim sliders used to do nothing to it -- those are per-Ecosystem
+    keyplate.KEY_RATE = st["krate"]
+    keyplate.KEY_YAW = st["kyaw"]
+    keyplate.KEY_SURGE = st["ksurge"]
+    keyplate.KEY_BEAT = st["kbeat"]
+    keyplate.KEY_SPIN_S = st["kspin"]
+    # SWIM_SCALE is per-Ecosystem in the water and a module constant on the
+    # plate, so it has to be set in both places or the two disagree
+    drift.SWIM_SCALE = st["swim"]
     if eco is not None:
         eco.swim_scale = st["swim"]
         eco.turn_scale = st["turn"]

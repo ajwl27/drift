@@ -1096,6 +1096,66 @@ which also means the motion can never drift out of step with the schedule.
 
 `docs/map_dolly.gif` is the move at the current settings.
 
+### The second pass on the interlude
+
+**The globe is silent.** No names, no caption, no scale bar — the opening shot
+is the Earth and nothing else. A label at that scale covers a thousand miles
+of the thing it is labelling, so writing on it is not information, it is
+furniture. And holding it quiet for three seconds is what makes the words
+mean something when they arrive.
+
+They arrive through the **ordered dither**, on `chrome_alpha(R)`: nothing on
+the globe, fully on by about a third of the way in. Not antialiasing -- there
+is no grey to antialias with -- but the same 8x8 Bayer matrix the screen
+dissolves use, so the letterforms thicken as the camera moves and the chart
+resolves into being labelled rather than having a caption dropped on it.
+`text()` and `label()` take an `alpha` now.
+
+**Three densities, not one.** Globe: nothing. Mid-zoom: rank 1 only, capped at
+five -- one or two names, enough to say which ocean. Chart: everything, capped
+at fourteen. The thresholds moved from 1/2/3 to **0/1/3**.
+
+**And the move comes back.** Globe, in, chart, **out**, globe. A one-way dolly
+ends at chart scale and then cuts to water, so the last thing the interlude
+says is a close-up of a coastline with nowhere to put it -- and next time it
+appears it snaps back to the globe with no explanation. Going out again spends
+the same seven seconds saying where that coast was, and leaves the screen on
+the Earth, which is a far better thing to dissolve to water from: a globe and
+a panel of plankton are both wide quiet images and a chart is not. The
+interlude is 25 s rather than 18.
+
+### The plate has its own motion now, and should
+
+Two problems, one small and one that mattered.
+
+The small one was a **bug**: `specimen_pose` read `SWIM_SCALE` as a module
+constant while the console sets it per-`Ecosystem`, so the swimming sliders
+moved the water and did nothing to the plate at all. (`apply_state` now sets
+both.)
+
+The large one is that it should not have been the same number anyway. The
+water is a **scene** -- something happening at a distance that you watch for
+minutes and are not meant to track any individual through. The plate is a
+**specimen case**: one organism, held still, at fifteen pixels of radius, with
+a visitor's whole attention on it while they read its name. A scene can afford
+business; a specimen under examination that will not keep still is simply hard
+to look at, and a whole column of them turning at once reads as fidgeting.
+
+So the plate has its own constants, all multipliers on what the water does and
+all below 1, all tunable under KEY PLATE:
+
+| | | |
+|---|---|---|
+| `KEY_RATE` | everything runs at this fraction of the water's already-slowed rate | 0.55 |
+| `KEY_YAW` | helix yaw amplitude | 0.45 |
+| `KEY_SURGE` | fore-and-aft sway | 0.45 |
+| `KEY_BEAT` | appendage beat rate | 0.60 |
+| `KEY_SPIN_S` | seconds for a non-swimmer to turn once | **420** |
+
+That last one was the loudest thing on the plate. The water uses
+`TUMBLE_S = 90`, which had a radiolarian visibly rotating while you read the
+two words beside it. Seven minutes is a drift.
+
 ---
 
 ## 10l. Legibility — **the type, the HUD, and a plate that moves**

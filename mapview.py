@@ -190,7 +190,7 @@ def draw_ship(c, cam, w=W, h=H, r=5):
     c.px(int(cx), int(cy))
 
 
-def draw_scale(c, cam, w=W, h=H):
+def draw_scale(c, cam, w=W, h=H, alpha=1.0):
     """A bar scale, because the zoom changes and a map without one is
     decoration rather than a chart."""
     nice = (200, 500, 1000, 2000, 5000)
@@ -202,16 +202,18 @@ def draw_scale(c, cam, w=W, h=H):
     # clear of the two caption lines below it, whichever of them is present
     y = h - 14 - 3 * (text_height(T_MED) + 5) - 6
     x0 = 10
-    c.line(x0, y, x0 + px, y)
-    c.line(x0, y - 4, x0, y + 4)
-    c.line(x0 + px, y - 4, x0 + px, y + 4)
+    if alpha > 0.4:
+        c.line(x0, y, x0 + px, y)
+        c.line(x0, y - 4, x0, y + 4)
+        c.line(x0 + px, y - 4, x0 + px, y + 4)
     # always above the left end of the bar: a label chasing the right end
     # collides with the frame edge at wide zooms and with the bar itself at
     # narrow ones, and above-left is the only position that never does either
-    label(c, x0, y - text_height(T_MED) - 5, "%d KM" % km, scale=T_MED)
+    label(c, x0, y - text_height(T_MED) - 5, "%d KM" % km, scale=T_MED,
+          alpha=alpha)
 
 
-def draw_caption(c, track, day, w=W, h=H):
+def draw_caption(c, track, day, w=W, h=H, alpha=1.0):
     conf = track.confidence(day)
     la, lo = track.position(day)
     ns = "N" if la >= 0 else "S"
@@ -220,12 +222,13 @@ def draw_caption(c, track, day, w=W, h=H):
     # act on, and it answers "how far through is this thing" without needing
     # the bar. The position underneath at reading size.
     d = "DAY %d" % int(day)
-    label(c, 10, 8, d, scale=T_BIG)
+    label(c, 10, 8, d, scale=T_BIG, alpha=alpha)
     label(c, 10 + text_width(d, scale=T_BIG) + 8,
           8 + text_height(T_BIG) - text_height(T_MED),
-          "OF %d" % track.days[-1], scale=T_MED)
+          "OF %d" % track.days[-1], scale=T_MED, alpha=alpha)
     label(c, 10, 8 + text_height(T_BIG) + 6, "%d%s%s  %d%s%s"
-          % (abs(int(la)), "\xb0", ns, abs(int(lo)), "\xb0", ew), scale=T_MED)
+          % (abs(int(la)), "\xb0", ns, abs(int(lo)), "\xb0", ew),
+          scale=T_MED, alpha=alpha)
 
     # Bottom left: what the ship is doing. When under way it is worth saying
     # where to, because a course line with no destination is only half a
@@ -244,7 +247,8 @@ def draw_caption(c, track, day, w=W, h=H):
         lines.append(trim("NEXT: %s %dD" % (port, int(away)), w - 20))
     y = h - 10 - text_height(T_MED) - (len(lines) - 1) * (text_height(T_MED) + 5)
     for i, ln in enumerate(lines):
-        label(c, 10, y + i * (text_height(T_MED) + 5), ln, scale=T_MED)
+        label(c, 10, y + i * (text_height(T_MED) + 5), ln, scale=T_MED,
+              alpha=alpha)
 
 
 # North stays up.
@@ -265,7 +269,20 @@ def draw_caption(c, track, day, w=W, h=H):
 NORTH_UP = True
 
 
-def draw_places(c, cam, track, day, R, w=W, h=H):
+def chrome_alpha(R):
+    """How solidly the writing is drawn at this zoom.
+
+    Nothing on the globe, fully on by a third of the way in. The words arrive
+    through the ordered dither as the camera moves, so the chart resolves
+    into being labelled rather than having a caption dropped on it -- and the
+    opening three seconds of Earth stay clean, which is the whole reason for
+    opening on it."""
+    f = (math.log(max(R, 1.0)) - math.log(R_GLOBE)) / \
+        (math.log(R_CHART) - math.log(R_GLOBE))
+    return max(0.0, min(1.0, (f - 0.05) / 0.28))
+
+
+def draw_places(c, cam, track, day, R, w=W, h=H, alpha=1.0):
     """Names on the coast.
 
     Two sources, both period-safe: the voyage's own anchorages, which are in
@@ -279,7 +296,11 @@ def draw_places(c, cam, track, day, R, w=W, h=H):
     dropped rather than shuffled, because a chart where the names have been
     nudged off their features to make room is worse than a chart with fewer
     names."""
-    taken = [(0, 0, w, 60), (0, h - 76, w, 76)]      # caption zones
+    # the zones the chrome owns: the day block at the top, and the scale bar
+    # plus two caption lines at the bottom. Measured from the same constants
+    # those use, so moving one moves the other.
+    taken = [(0, 0, w, 8 + text_height(T_BIG) + 6 + text_height(T_MED) + 8),
+             (0, h - 14 - 4 * (text_height(T_MED) + 5) - 14, w, h)]
 
     def fits(x, y, tw, th):
         for bx, by, bw, bh in taken:
@@ -296,7 +317,9 @@ def draw_places(c, cam, track, day, R, w=W, h=H):
     # ship made. The two places that are always worth naming, at any zoom,
     # are where the ship is and where it is going next.
     mr = places.rank_for(R, R_GLOBE, R_CHART)
-    cap = (6, 10, 14)[mr - 1]
+    if mr <= 0 or alpha <= 0.02:
+        return
+    cap = (0, 5, 9, 14)[mr]
     port, _away = track.next_port(day)
     here = track.anchored(day)
 
@@ -326,8 +349,9 @@ def draw_places(c, cam, track, day, R, w=W, h=H):
         for ox in (7, -7 - tw):
             tx, ty = x + ox, y - th // 2
             if fits(tx - 2, ty - 2, tw + 4, th + 4):
-                c.circle(x, y, 2)
-                label(c, tx, ty, s, scale=T_MED)
+                if alpha > 0.5:
+                    c.circle(x, y, 2)
+                label(c, tx, ty, s, scale=T_MED, alpha=alpha)
                 taken.append((tx - 3, ty - 3, tw + 6, th + 6))
                 break
 
@@ -342,12 +366,13 @@ def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):
     coast.draw(canvas, cam, w, h)
     draw_limb(canvas, cam, w, h)
     draw_track(canvas, track, cam, day, w, h)
+    a = chrome_alpha(R)
     if chrome:
-        draw_places(canvas, cam, track, day, R, w, h)
+        draw_places(canvas, cam, track, day, R, w, h, a)
     draw_ship(canvas, cam, w, h)
-    if chrome:
-        draw_scale(canvas, cam, w, h)
-        draw_caption(canvas, track, day, w, h)
+    if chrome and a > 0.02:
+        draw_scale(canvas, cam, w, h, a)
+        draw_caption(canvas, track, day, w, h, a)
     return cam
 
 

@@ -130,6 +130,38 @@ KEY_R = {k: min(r, SPEC_HALF / max(EXTENT.get(k, 1.5), 0.5))
 
 BASE_ANG = -0.35           # the angle every specimen was drawn at before
 
+# --------------------------------------------------------------------------
+# THE PLATE HAS ITS OWN MOTION, AND SHOULD
+# --------------------------------------------------------------------------
+#
+# The first version drove the plate straight off SWIM_SCALE, which had two
+# problems. The small one was a bug: SWIM_SCALE is read here as a module
+# constant while the console sets it per-Ecosystem, so the swimming sliders
+# moved the water and did nothing to the plate at all.
+#
+# The large one is that it should not have been the same number anyway. The
+# water is a scene -- a thing happening at a distance that you watch for
+# minutes and are not meant to track any individual through. The plate is a
+# specimen case: one organism, held still, at fifteen pixels of radius, with
+# a visitor's whole attention on it while they read its name. Those want
+# different motion. A scene can afford business; a specimen under
+# examination that will not keep still is just hard to look at, and a whole
+# column of them turning at once reads as fidgeting.
+#
+# So the plate gets its own constants, all of them multipliers on what the
+# water does, and all of them below 1. Tunable in tools/console.py under
+# KEY PLATE, because "how much movement is too much on a thing being read"
+# is a judgement by eye like every other number in this file's neighbourhood.
+KEY_RATE = 0.55            # everything on the plate runs at this fraction of
+                           # the water's already-slowed rate
+KEY_YAW = 0.45             # helix yaw amplitude, against the water's
+KEY_SURGE = 0.45           # fore-and-aft sway
+KEY_SPIN_S = 420.0         # seconds for a non-swimmer to turn once. The water
+                           # uses TUMBLE_S = 90, which on the plate had a
+                           # radiolarian visibly rotating while you read two
+                           # words next to it. Seven minutes is a drift.
+KEY_BEAT = 0.60            # appendage beat rate
+
 # Beats per second, in ANIMAL time, for the parts that move independently of
 # the whole animal. Krill row their pleopods several times a second whatever
 # else they are doing; the passive flexers are slower because nothing is
@@ -158,33 +190,32 @@ def specimen_pose(kind, t):
     the translation is a gentle sway and the WORK is done by the appendages
     -- which is also what you would actually see, since a tethered copepod
     rows its antennae and stays put."""
-    slow = SWIM_SCALE
+    slow = SWIM_SCALE * KEY_RATE
     ta = t * slow                                  # animal seconds
     gait = GAIT.get(kind)
     beat = BEAT_HZ.get(kind)
-    if beat is not None:
-        ph = 2.0 * math.pi * beat * ta
-    else:
-        ph = 0.0
+    ph = 2.0 * math.pi * beat * ta * KEY_BEAT if beat is not None else 0.0
     if gait == HELIX:
         f = HELIX_HZ[kind]
-        yaw = HELIX_YAW[kind]
+        yaw = HELIX_YAW[kind] * KEY_YAW
         hp = 2.0 * math.pi * f * ta
         # the corkscrew, seen edge-on: a yaw oscillation, and a gentle surge
         # a quarter cycle out of phase so it reads as swimming rather than
         # as a windscreen wiper
-        return BASE_ANG + yaw * math.sin(hp), 0.32 * math.cos(hp), hp
+        return (BASE_ANG + yaw * math.sin(hp),
+                0.32 * KEY_SURGE * math.cos(hp), hp)
     if gait == HOP:
         hp = 2.0 * math.pi * HOP_HZ[kind] * ta
         # one antennal stroke per hop, and a sway a quarter cycle behind it,
         # because the body follows the limbs rather than leading them
-        return BASE_ANG, 0.16 * math.sin(hp - 1.4), hp
+        return BASE_ANG, 0.16 * KEY_SURGE * math.sin(hp - 1.4), hp
     if gait == CRUISE:
-        return BASE_ANG + 0.05 * math.sin(2.0 * math.pi * 0.35 * ta), 0.0, ph
-    # not a swimmer: turning in shear, and nothing else. Slow enough that a
-    # radiolarian takes most of a minute to show you a new face, which is
-    # about right for a thing that has no say in the matter.
-    return (BASE_ANG + 2.0 * math.pi * (t % TUMBLE_S) / TUMBLE_S, 0.0, ph)
+        return (BASE_ANG + 0.05 * KEY_YAW * math.sin(2.0 * math.pi * 0.35 * ta),
+                0.0, ph)
+    # not a swimmer: turning in shear, and nothing else. On its own clock,
+    # much slower than the water's, because a specimen rotating while you
+    # read the two words beside it is a specimen you cannot read.
+    return (BASE_ANG + 2.0 * math.pi * (t % KEY_SPIN_S) / KEY_SPIN_S, 0.0, ph)
 
 
 def _specimen(c, kind, cx, cy, seed=1, t=0.0):

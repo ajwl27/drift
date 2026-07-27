@@ -139,17 +139,22 @@ def visible(cam, w, h, max_rank):
 
 
 def rank_for(R, r_globe, r_chart):
-    """How much naming a given zoom can carry.
+    """How much naming a given zoom can carry, 0 to 3.
 
-    On the globe two names is plenty and twelve is a mess -- at that scale a
-    label covers a thousand miles of what it is labelling. At chart scale the
+    **Zero on the globe.** The opening shot is the Earth, and a label at that
+    scale covers a thousand miles of the thing it is labelling. Writing on it
+    is not information, it is furniture -- and holding the globe silent for
+    three seconds is what makes the words mean something when they arrive.
+
+    Then a handful through the move, and everything at chart scale, where the
     frame is a few hundred miles across and every name in it is telling you
-    something. Geometric in R, because zoom is."""
-    import math
+    which stretch of coast you are looking at.
+
+    Geometric in R, because zoom is."""
     f = (math.log(max(R, 1.0)) - math.log(r_globe)) / \
         (math.log(r_chart) - math.log(r_globe))
-    if f < 0.30:
+    if f < 0.22:
+        return 0
+    if f < 0.62:
         return 1
-    if f < 0.75:
-        return 2
     return 3

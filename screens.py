@@ -49,7 +49,9 @@ class Cadence:
             return self.water
         if screen == KEY:
             return self.key
-        return self.globe + self.dolly + self.chart
+        # globe, in, chart, out. The move comes back, so the interlude both
+        # opens and closes on the Earth.
+        return self.globe + self.dolly + self.chart + self.dolly
 
 
 # The key plate got longer when the type got bigger, and longer again when
@@ -70,14 +72,26 @@ EXHIBIT_LAPSE = 300.0          # seconds before EXHIBIT falls back to GALLERY
 
 
 def map_radius(t_into_map, cad):
-    """Globe, then dolly, then chart. Holding at both ends is what makes the
-    move legible -- a zoom with no rest at either end is just a wobble."""
+    """Globe, in, chart, out, globe. Holding at both ends is what makes the
+    move legible -- a zoom with no rest at either end is just a wobble.
+
+    It comes back. A one-way dolly ends at chart scale and then cuts to
+    water, so the last thing the interlude says is a close-up of a coastline
+    with nowhere to put it, and the next time it appears it snaps back to the
+    globe with no explanation. Going out again spends the same seven seconds
+    saying where that coast was, and leaves the screen on the Earth -- which
+    is a much better thing to dissolve to water from, because a globe and a
+    panel of plankton are both wide, quiet images and a chart is not."""
     if t_into_map < cad.globe:
         return R_GLOBE
     t = t_into_map - cad.globe
     if t < cad.dolly:
         return zoom_radius(t / cad.dolly)
-    return R_CHART
+    t -= cad.dolly
+    if t < cad.chart:
+        return R_CHART
+    t -= cad.chart
+    return zoom_radius(max(0.0, 1.0 - t / cad.dolly))
 
 
 class Rotation:
