@@ -1029,6 +1029,69 @@ Ranked by probability × damage.
 
 ---
 
+## 10i. The console — **the development build proper**
+
+`tools/tune.py` answered one question at a time and answered it well: four
+panels, same seed, one parameter differing. But the parameters interact —
+swimming speed against turn persistence against body lag against frame rate —
+and four fixed panels cannot show an interaction. `tools/console.py` is the
+whole thing on one screen.
+
+    python3 tools/console.py
+
+![the console](console.png)
+
+**Ten live parameters**, each with a log or linear slider chosen to suit its
+range, a tick showing its default, and keyboard nudge at three step sizes:
+
+| | | |
+|---|---|---|
+| MOTION | swim scale, turn scale, body lag | the three from §10g and §10h |
+| GAIT | helix yaw, helix rate, hop rate, hop coast, shear tumble | multipliers folded into the per-species tables, so the published ratios survive |
+| PANEL | frame rate 0.25–51 fps, time 1 sec/sec – 1 day/sec | the panel's real range, both ends |
+| SCENE | voyage day 0–1018, seed | which community you are looking at |
+
+**All three screens**, on buttons and on keys 1/2/3 — water, chart, key plate —
+with the map's zoom broken out as globe / dolly / chart so you can sit on the
+globe and look at it rather than catching it in passing. Plate chrome and the
+debug HUD toggle separately.
+
+**Frame rate is real.** The window runs at 60 Hz; the panel steps and redraws
+on its own clock, by exactly the interval that elapsed. So at 1 fps the
+simulation genuinely takes one-second steps, which is what the device does —
+it steps and draws in the same loop. You are shown 1 fps, not told about it.
+
+**A/B on every parameter.** TAB deep-copies the live ecosystem into A and
+splits the window. Both sides then step in the same loop, with each side's
+globals re-applied immediately before it steps — which is the trick that lets
+the two sides differ in *all ten* parameters rather than only the two that
+happen to live on the `Ecosystem`. Same organisms, same places, same day.
+
+**The measured consequence, live.** Under each panel: rotation per rendered
+frame in degrees, mean speed in px/s, agent count, day, position, and whether
+the ship is at sea. These are the §10h numbers computed as you drag. The eye
+decides; the number is what gets written down and defended.
+
+**Export.** `e` writes a paste-ready block to `docs/tuned_values.txt` — the
+scalars as scalars, and the gait multipliers already folded into the
+per-species dictionaries under the identifiers `drift.py` uses.
+
+### What it costs the shipping file
+
+Nothing. Not one line. The console sets `drift` module globals, which works
+because `_swim` reads `BODY_TAU`, `TUMBLE_S`, `HELIX_YAW`, `HELIX_HZ`,
+`HOP_HZ` and `COAST_S` at call time, and it sets `swim_scale`, `turn_scale`
+and `time_compression` as instance attributes, which already existed. Reaching
+into another module's globals is exactly the sort of thing a development build
+is allowed to do and shipping code is not — and it is why this is a separate
+file.
+
+`tools/tune.py` stays. Four panels at once is still the better instrument for
+a single parameter with a wide range; the console is the better instrument for
+everything else.
+
+---
+
 ## 10h. The jitter — **and it was a units bug, not a taste problem**
 
 The observation, from across the room: *the cells jitter, changing direction a
