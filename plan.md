@@ -1029,6 +1029,131 @@ Ranked by probability × damage.
 
 ---
 
+## 10j. Frame rate against battery life — **numbers, and which of them is soft**
+
+`tools/power.py`, rewritten with measured frame costs and sourced hardware
+figures. Full output in `docs/power.txt`.
+
+### The frame
+
+Measured on this machine at day 300, 43 agents:
+
+| | CPython, ms |
+|---|---|
+| simulation step | 1.47 |
+| render, water | 2.01 |
+| render, chart | 8.41 |
+| render, key plate | 1.65 |
+| **cadence-weighted** | **3.53** total |
+
+The chart is four times the cost of the water view and 0.8% of the GALLERY
+cadence, so it is 3% of the render budget. Worth knowing; not worth optimising.
+
+### The answer, on a stock Pico 2 and one 18650
+
+| | duty | MCU | panel | total | days |
+|---|---|---|---|---|---|
+| 0.25 fps | 0.1% | 2.46 | 0.02 | 2.48 | 49 |
+| 1 fps | 0.4% | 2.53 | 0.04 | 2.57 | 47 |
+| 5 fps | 1.8% | 2.91 | 0.13 | 3.05 | 40 |
+| 10 fps | 3.5% | 3.40 | 0.25 | 3.65 | 34 |
+| 15 fps | 5.3% | 3.88 | 0.37 | 4.25 | 29 |
+| **20 fps** | 7.1% | 4.36 | 0.49 | **4.85** | **25** |
+| 51 fps | 18.0% | 7.35 | 1.22 | 8.57 | 14 |
+
+Two hundred-fold in frame rate buys **three and a half times** the battery
+life. That is the whole finding, and it is not the answer you would guess.
+
+### Why: the sleep floor eats it
+
+A stock Pico 2 idles at **2.4 mA** (1.8 mA measured at 5 V, converted to the
+cell). At 1 fps the MCU is asleep 99.6% of the time, so essentially the entire
+budget is idle current, and dropping the frame rate further is fighting a
+number that has already stopped moving.
+
+Fix the idle and the same span becomes a **seventeen-fold** lever:
+
+| | stock Pico 2 | tuned board (0.27 mA idle) |
+|---|---|---|
+| 51 fps | 14 d | 18 d |
+| 20 fps | 25 d | 43 d |
+| 10 fps | 34 d | 76 d |
+| 5 fps | 40 d | 124 d |
+| 1 fps | 47 d | 252 d |
+| 0.25 fps | 49 d | 312 d |
+
+**Until the sleep current is dealt with, dropping the frame rate is fighting
+the wrong number.** Deep sleep with proper power management measures 170 µA on
+an RP2350; on a custom board with an LDO and the unused rails down it should
+be better still.
+
+### The panel is not the problem
+
+| | MCU | panel |
+|---|---|---|
+| 1 fps | 98% | 2% |
+| 20 fps | 90% | 10% |
+| 51 fps | 86% | 14% |
+
+The ST7305 draws about **24 µA per Hz** for a 240×400 panel — roughly 0.5 mA at
+20 fps and 1.2 mA flat out. Reflective, so no backlight: being looked at is
+free, which is most of why it was chosen. Every saving worth having is on the
+compute side.
+
+That figure is two independent numbers agreeing. The ST7302 (250×122) is quoted
+at 30 µA at 4 Hz, i.e. 7.5 µA/Hz; scaled by pixel count (×3.15) that predicts
+94 µA at 4 Hz for ours, and the ST7305's own published low-power figure is
+"about 100 µA or less."
+
+### The levers, at 20 fps
+
+| | mA | days | |
+|---|---|---|---|
+| as it stands | 4.85 | 25 | |
+| frame cost halved | 3.88 | 32 | 1.25× |
+| tuned idle | 2.84 | 43 | 1.71× |
+| both | 1.80 | 66 | 2.70× |
+| both, and 10 fps | 1.04 | 111 | 4.65× |
+
+Duty cycle is `frame_ms × fps` and does not care which factor you shrink — so
+halving the frame cost is worth as much as halving the frame rate, and one of
+them costs you the motion while the other costs you nothing to look at.
+
+### What is soft
+
+The **CPython-to-C factor** is the only number here that is neither measured
+nor sourced. CPython is 30–70× slower than C; a 150 MHz M33 is ~45× slower than
+a modern x86 core (225 DMIPS against ~10,000). Those roughly cancel, so the
+working assumption is that a frame costs about the same wall-clock on the panel
+as it does here — and the tool sweeps it 0.5×–2× rather than asserting it. At
+20 fps that band is **18 to 32 days**. It wants measuring on hardware before
+anyone believes it.
+
+Not modelled: regulator loss at these currents (add 15–25% through a
+buck-boost; an LDO from a single cell is often better despite the dropout);
+wake-up cost (nothing at 20 fps, 5–10% at 0.25 fps); panel current on a fully
+changing image; and temperature — a cell at 0 °C gives about 70% of its rating.
+Li-ion self-discharge (83 µA on a 3000 mAh cell) **is** included, and below half
+a milliamp it is a significant fraction that no design gets under.
+
+### For the gift boxes
+
+At 20 fps a single 18650 is **under a month**, which makes it a thing that
+needs charging rather than a thing that hangs on a wall. Options, in order of
+how much they change the object:
+
+1. **Mains, as originally decided.** A USB-C socket and it never comes up again.
+2. **Tuned idle plus 10 fps** — 76 days on one cell, 150 on two. A quarterly
+   ritual, which is defensible for an object about a three-year voyage.
+3. **1 fps on a tuned board** — 252 days, and no longer an aquarium.
+
+This is the argument the first design conversation already had, and it came out
+the same way: the piece was decided as mains-powered when the choice was
+"moving, or slowly changing?" and the answer was "moving — you can watch it
+drift."
+
+---
+
 ## 10i. The console — **the development build proper**
 
 `tools/tune.py` answered one question at a time and answered it well: four

@@ -1,0 +1,115 @@
+Frame: sim 1.47 + render 2.06 (cadence-weighted) = 3.53 ms in CPython
+
+=== 1. Frame rate against battery life, one 18650 (3000 mAh) ===
+
+                        duty   MCU mA  panel mA  total mA    days range (C 2x-0.5x)  
+one frame per 4 s       0.1%     2.46     0.021      2.48      49     48 - 49      the panel's slowest setting
+1 fps                   0.4%     2.53     0.039      2.57      47     46 - 48      a clock, not an aquarium
+2 fps                   0.7%     2.63     0.062      2.69      45     42 - 47      
+5 fps                   1.8%     2.91     0.133      3.05      40     35 - 43      motion, visibly stepped
+8 fps                   2.8%     3.20     0.204      3.41      36     29 - 40      
+10 fps                  3.5%     3.40     0.251      3.65      34     27 - 38      floor for the fastest swimmer to read
+15 fps                  5.3%     3.88     0.369      4.25      29     22 - 35      assumed at the first design conversation
+20 fps                  7.1%     4.36     0.487      4.85      25     18 - 32      the preview's rate
+30 fps                 10.6%     5.32     0.723      6.05      20     14 - 27      
+51 fps                 18.0%     7.35     1.219      8.57      14      9 - 20      the panel's maximum
+
+'days' is at the central C-factor; the range sweeps it 0.5x-2x,
+which is the honest width of the extrapolation to C on the M33.
+
+=== 2. What each step down in frame rate actually buys ===
+
+                 total mA     days   gain on the last
+51 fps               8.57       14   
+30 fps               6.05       20   1.41x
+20 fps               4.85       25   1.24x
+10 fps               3.65       34   1.32x
+5 fps                3.05       40   1.19x
+2 fps                2.69       45   1.13x
+1 fps                2.57       47   1.05x
+0.25 fps             2.48       49   1.04x
+
+The returns stop, and they stop early. 51 -> 10 fps multiplies
+life by 2.3x; 10 -> 1 fps by 1.4x; 1 -> 0.25 fps by 1.04x. Below
+a few frames a second there is almost nothing left to win, because
+the MCU is asleep 99.6% of the time and you are paying its idle
+current whatever you do. Which is section 2b.
+
+=== 2b. The same table on a board that can actually sleep ===
+
+This is the finding. On a stock Pico 2 the idle current is 2.4 mA,
+so the panel spends its life paying that whatever the frame rate
+is, and frame rate is only a 3x lever end to end. Get the idle
+down to 0.27 mA and the same span becomes a 17x lever.
+
+             stock Pico 2  tuned board   ratio
+51 fps              14 d         18 d   1.3x
+30 fps              20 d         30 d   1.5x
+20 fps              25 d         43 d   1.7x
+15 fps              29 d         55 d   1.9x
+10 fps              34 d         76 d   2.3x
+5 fps               40 d        124 d   3.1x
+2 fps               45 d        200 d   4.4x
+1 fps               47 d        252 d   5.3x
+0.25 fps            49 d        312 d   6.4x
+
+Until the sleep current is dealt with, dropping the frame rate
+is fighting the wrong number.
+
+=== 3. The other levers, all at 20 fps ===
+
+as it stands                                        4.85 mA     25 d   
+frame cost halved (better C, or partial update)     3.88 mA     32 d   1.25x
+custom board, tuned idle (0.27 mA)                  2.84 mA     43 d   1.71x
+both together                                       1.80 mA     66 d   2.70x
+...and 10 fps as well                               1.04 mA    111 d   4.65x
+
+Halving the frame cost buys 1.24x and halving the frame rate
+buys 1.32x -- the same lever, because duty cycle is frame_ms x fps
+and it does not care which factor you shrink. One of them costs
+you the motion and the other costs you nothing to look at.
+
+=== 4. The panel is not the problem ===
+
+    1 fps:  MCU   2.53 mA (98%)    panel 0.039 mA (2%)
+   10 fps:  MCU   3.40 mA (93%)    panel 0.251 mA (7%)
+   20 fps:  MCU   4.36 mA (90%)    panel 0.487 mA (10%)
+   51 fps:  MCU   7.35 mA (86%)    panel 1.219 mA (14%)
+
+A reflective LCD has no backlight, so being looked at is free.
+Even at its 51 Hz maximum the panel draws about a milliamp, a
+twentieth of what the MCU costs to feed it. Every saving worth
+having is on the compute side.
+
+=== 5. Cells, at the rates the piece is likely to run ===
+
+  at 10 fps (3.65 mA):
+      18650, 3000 mAh             34 days  (1.1 months)
+      2 x 18650                   67 days  (2.2 months)
+      LiPo pouch, 1200 mAh        13 days  (0.4 months)
+      4 x AA alkaline             27 days  (0.9 months)
+  at 20 fps (4.85 mA):
+      18650, 3000 mAh             25 days  (0.8 months)
+      2 x 18650                   51 days  (1.7 months)
+      LiPo pouch, 1200 mAh        10 days  (0.3 months)
+      4 x AA alkaline             20 days  (0.7 months)
+
+Self-discharge (83 uA) is included. Below about half a
+milliamp total it is a significant fraction, and no design
+gets under it.
+
+=== 6. What this does not model ===
+
+Regulator loss. A buck-boost at a 2 mA load runs well off its
+  efficiency peak; add 15-25% for anything fed from a cell
+  through one. An LDO from a single Li-ion cell is often better
+  at these currents despite the dropout.
+Wake-up cost. Leaving sleep, relocking the PLL and re-enabling
+  XIP is tens of microseconds -- nothing at 20 fps, but 5-10% of
+  the budget at 0.25 fps where the frames are all that happens.
+Panel current on a fully changing image. The vendor figures are
+  typical, and every pixel moving every frame will be worse.
+Temperature. A cell at 0 C gives perhaps 70% of its rating.
+The map screen's 8.4 ms. It is 0.8% of the time and folded into
+  the weighted average above; if the cadence ever became
+  map-heavy this model would need redoing.
