@@ -20,7 +20,7 @@ import random
 import draw
 import fish as F
 from drift import (Canvas, W, H, text, text_width, text_height, fit_scale,
-                   wrap, T_BIG, T_MED)
+                   trim, wrap, T_BIG, T_MED)
 
 # --------------------------------------------------------------------------
 # what each row says
@@ -326,9 +326,16 @@ def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,
         # lo=T_MED, not lo=1: if a line ever outgrows its column the right
         # answer is to shorten the words, not to print them at a size that
         # defeats the point of the whole pass
-        line = "%s %s" % (f.size_label, f.binomial.split()[0])
-        text(canvas, TEXT_X, ty, line,
-             scale=fit_scale(line, avail, hi=T_MED, lo=T_MED))
+        # TRIMMED, not shrunk. fit_scale with lo=T_MED cannot go below
+        # reading size -- which is the whole point of it -- so a line that
+        # does not fit simply runs off the panel: "5-10CM CERATOSCOPELUS" is
+        # 231 px against a 222 px column and lost its last two letters to
+        # the edge. Trimming puts the truncation where it can be seen and
+        # keeps the type readable, which is the trade this plate has made
+        # everywhere else.
+        line = trim("%s %s" % (f.size_label, f.binomial.split()[0]),
+                    avail, scale=T_MED)
+        text(canvas, TEXT_X, ty, line, scale=T_MED)
         by = ty + text_height(T_MED) + 10
         abundance_bar(canvas, TEXT_X, by, bar_w, ab)
     canvas.clip()

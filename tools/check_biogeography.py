@@ -176,6 +176,10 @@ def run_checks(sweeps):
     nototh = C("the Southern Ocean is notothenioid, not tropical",
                "a thermal envelope centred below 5 C excludes everything "
                "else, and the range table is circumpolar")
+    evenness = C("the track as a whole stays diverse",
+                 "one region may honestly be dominated by a forage fish; a "
+                 "median across all of them that is low means the abundance "
+                 "term is collapsing everywhere, which no ocean does")
     diverse = C("no region collapses to one species",
                 "competitive exclusion is not possible here -- presence is "
                 "an envelope, not a competition -- so a region reduced to "
@@ -274,7 +278,17 @@ def run_checks(sweeps):
         # guarding against a runaway exponent, not asserting evenness, and a
         # threshold that fails on a true result is a threshold that will be
         # ignored.
-        diverse.add(worst < 0.85,
+        # 0.95, and paired with a diversity floor below rather than tightened
+        # on its own. A SINGLE FORAGE SPECIES CARRYING MOST OF A SHELF'S FISH
+        # BIOMASS IS REAL -- anchoita on the Patagonian shelf, anchoveta off
+        # Peru -- and a threshold that fails on a true result is a threshold
+        # that gets ignored. What this is guarding against is a runaway
+        # exponent, which does not stop at 0.9.
+        effs = sorted(effective_species(d) for d in sh.values() if d)
+        med_eff = effs[len(effs) // 2] if effs else 0.0
+        evenness.add(med_eff > 4.0,
+                     "median effective species across regions %.1f" % med_eff)
+        diverse.add(worst < 0.95,
                     "largest single share %.2f (%s)%s"
                     % (worst, worst_r,
                        "  [thin: %s]" % ",".join(sorted(thin)) if thin else ""))

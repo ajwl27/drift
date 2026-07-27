@@ -421,7 +421,7 @@ ROSTER = (
     # bathydemersal, 5S-46S off Chile and Peru. "Exhibits vertical migration
     # to midwater at night for feeding" -- so it is a demersal fish with a
     # migration, and it gets one.
-    _f(HAKE_CL, "MERLUCCIUS GAYI", "SOUTH PACIFIC HAKE", "GADOID", "40-70CM",
+    _f(HAKE_CL, "MERLUCCIUS GAYI", "PACIFIC HAKE", "GADOID", "40-70CM",
        50.0, 87.0, 4.3,
        temp=(9.3, 10.0, 13.0, 14.0), habitat=SLOPE,
        prod=(0.20, 0.38, 1.0, 1.0),
@@ -541,6 +541,13 @@ ROSTER = (
        prod=ANY_PROD,
        z=(200.0, 900.0), gait=ANGUILLIFORM, shoal=0.20, swim_bl=1.2,
        note="the most abundant vertebrate genus on Earth"),
+    # STANDS FOR THE GENUS, and the OBIS check is what made that explicit:
+    # braueri itself is Atlantic-centred and has no records in the Moluccas,
+    # while Cyclothone as a genus is in every ocean and is the most abundant
+    # vertebrate genus there is. The plate prints CYCLOTHONE, which is true at
+    # the rank it is being used at. Every roster of thirty-five species
+    # standing in for thousands does this somewhere; this is the one place it
+    # is load-bearing, so it is the one place it is written down.
 
     # FishBase: 0-2400 m (usual 100-700), 5.5-21.3 C, 5.1 cm max, trophic
     # 3.1. "Marked vertical migrations": day 200-700 (peak 350-550), night
@@ -616,7 +623,12 @@ RANGE = {
     # -- South-East Pacific. The Humboldt's own.
     ANCHOVETA:   ((-43.0, -5.0), PACIFIC),
     HAKE_CL:     ((-46.0, -5.0), PACIFIC),
-    JACKMACK:    ((-51.0,  2.0), PACIFIC | ATLANTIC),
+    # PACIFIC only. It was given the Atlantic as well for the Argentine
+    # shelf, where it is marginal -- and the basin test cannot say "south-west
+    # Atlantic", so that allowance also let it into the Benguela, where the
+    # jack mackerel is Trachurus capensis and OBIS has no record of murphyi at
+    # all. Losing a marginal Argentine occurrence is the cheaper error.
+    JACKMACK:    ((-51.0,  2.0), PACIFIC),
 
     # Anti-tropical, and the latitude band cannot express that -- a single
     # (south, north) pair covering both hemispheres necessarily spans the
@@ -650,7 +662,12 @@ RANGE = {
     FLYINGFISH:  ((-36.0, 44.0), ALL_BASINS),
     BLUESHARK:   ((-55.0, 70.0), ALL_BASINS),
     WHALESHARK:  ((-48.0, 45.0), ALL_BASINS),
-    WARMING:     ((-65.0, 42.0), ALL_BASINS),
+    # -48, not the -65 FishBase gives as an extreme: the species account says
+    # "south to the Subtropical Convergence", which is about 45 S, and the
+    # OBIS cross-check found no record of it anywhere in the Drake Passage.
+    # A limit taken from a distribution statement beats one taken from the
+    # furthest stray specimen.
+    WARMING:     ((-48.0, 42.0), ALL_BASINS),
     BRISTLEMOUTH:((-40.0, 67.0), ALL_BASINS),
     HATCHETFISH: ((-56.0, 60.0), ALL_BASINS),
     VIPERFISH:   ((-56.0, 70.0), ALL_BASINS),

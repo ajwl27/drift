@@ -162,28 +162,57 @@ N_FLOOR = 6                # THE PANEL IS NEVER BARE, and in a gyre this is
 # of anchovy on the Patagonian shelf actually is.
 AB_LO = 1.5
 AB_HI = 4082.0
-AB_N_MAX = 50              # fish drawn for the richest a species ever gets
+AB_N_MAX = 32              # fish drawn for the richest a species ever gets.
+                           # MEASURED AGAINST THE WHOLE TRACK rather than
+                           # picked. Fifty was the first guess and it pinned
+                           # the panel to MAX_AGENTS for 62% of the voyage --
+                           # with a dozen species present, even a few fish
+                           # each overruns the budget, the proportional
+                           # scale-down engages, and the interpolation stops
+                           # meaning anything because every water is equally
+                           # full. Swept over 255 samples:
+                           #
+                           #     AB_N_MAX   median   at cap
+                           #        50        56      62%
+                           #        40        49      25%
+                           #        32        41       6%
+                           #        26        35       1%
+                           #
+                           # 32 keeps the interpolation honest almost
+                           # everywhere and is still unmistakably a shoal.
 
 TROPHIC_REF = 2.5          # the base of the pyramid, near a pure planktivore
-TURNOVER_EXP = 0.5         # BIOMASS PYRAMIDS ARE SHALLOWER THAN PRODUCTION
-                           # PYRAMIDS, and leaving this out is what made a
-                           # shelf read as one species.
+TURNOVER_EXP = 0.0         # SIZE DOES NOT ENTER BIOMASS, and getting here
+                           # took two wrong answers.
                            #
-                           # The trophic term is about PRODUCTION -- how much
-                           # new tissue a level makes. What stands in the
-                           # water is production divided by turnover, and a
-                           # hake turns over perhaps three times more slowly
-                           # than an anchovy, so it accumulates. P/B falls
-                           # with body size roughly as L^-0.5, so standing
-                           # biomass carries L^+0.5 against pure production.
+                           # The trophic term is a PRODUCTION ratio -- ten per
+                           # cent transfer is a statement about energy. What
+                           # stands in the water is production divided by
+                           # turnover, and P/B falls with size, so the obvious
+                           # correction is a positive size exponent. At 0.5 it
+                           # fixed the Argentine anchovy taking 98% of the
+                           # Patagonian shelf, and broke something worse: the
+                           # WHALE SHARK became the highest-biomass species in
+                           # the Humboldt, the Moluccas and the Benguela. A
+                           # ten-metre filter feeder eating at trophic 3.6
+                           # gets a small trophic penalty and a sevenfold size
+                           # boost, and nothing in the model knew that whale
+                           # sharks are rare.
                            #
-                           # Measured against the case that exposed it: on the
-                           # Patagonian shelf the production ratio of anchovy
-                           # to hake is about 44 to 1 and the observed
-                           # standing-stock ratio is nearer 5 to 1. The
-                           # turnover term closes most of that gap, and it
-                           # closes it with a mechanism rather than a fudge
-                           # factor.
+                           # They are rare for a reason none of these terms
+                           # carries: population density is limited by home
+                           # range, not by energy. Rather than invent a term
+                           # for that, the size correction goes to zero, which
+                           # is also what the observation says -- the Sheldon
+                           # spectrum finds roughly EQUAL biomass in each
+                           # logarithmic size class of the sea. Production
+                           # falling with size and biomass staying flat are
+                           # the same statement, so the two cancel and the
+                           # honest exponent is nought.
+                           #
+                           # Kept as a named constant rather than deleted
+                           # because the reasoning above is worth more than
+                           # the line it removes.
 TROPHIC_DECADE = 0.8       # DECADES OF BIOMASS LOST PER TROPHIC LEVEL, and
                            # 1.0 -- the textbook ten per cent -- is the top of
                            # the measured range rather than the middle of it.
@@ -1137,6 +1166,24 @@ class Ecosystem:
                 temp_at, self.bottom, self.prod, shore, la, lo, floor=0.0)[:4]
         if not self.assemblage and self.bottom > 400.0:
             self.assemblage = [(k, 0.05) for k in F.MESOPELAGIC]
+        if not self.assemblage:
+            # Shallow water that suits nothing in the roster at all -- a cold
+            # enclosed bay, mostly. Four trapezoids multiplied can be exactly
+            # zero for every species, and then even the floor above has
+            # nothing to stand on: the count came out at zero fish, which is
+            # the one number this panel must never show.
+            #
+            # Fall back to whoever is closest on TEMPERATURE, which is the
+            # axis that actually excludes things here, and let the rest go.
+            # It is a guess, and it is a guess about the right axis.
+            t_here = env.temperature(t, 20.0)
+            near = sorted(F.ROSTER,
+                          key=lambda f: min(abs(t_here - f.temp[1]),
+                                            abs(t_here - f.temp[2])))
+            self.assemblage = [(f.key, 0.04) for f in near[:3]
+                               if F.reachable(f.key, la, lo)][:3]
+            if not self.assemblage:
+                self.assemblage = [(near[0].key, 0.04)]
         self._shares()
 
     def abundance(self, key, suit):
@@ -1235,6 +1282,22 @@ class Ecosystem:
                 if want[big] <= 1:
                     break
                 want[big] -= 1
+        elif 0 < total < N_FLOOR:
+            # THE PANEL IS NEVER BARE, and this floor went missing when the
+            # count stopped being a share of a budget: the budget carried the
+            # floor, and the interpolation that replaced it has no opinion
+            # about totals at all. Seven panels in a 102-sample sweep came
+            # back with fewer than six fish, and one came back with one.
+            #
+            # Topped up by handing extra individuals to the most abundant
+            # species present, which is the one the water actually holds most
+            # of -- rather than by inventing a species, which would be a
+            # different and much worse kind of floor.
+            order = sorted(want, key=lambda k: -self.ab[k])
+            i = 0
+            while sum(want.values()) < N_FLOOR:
+                want[order[i % len(order)]] += 1
+                i += 1
         self.want = want
         self.n_want = sum(want.values())
         self.n_band = (sum(v for k, v in want.items()
@@ -2099,12 +2162,15 @@ def voyage_sweep(outdir, every=30, seed=7, log_every=10, voyage="drake"):
         if eco.t >= nxt_log:
             nxt_log += log_every
             la, lo = track.position(eco.t)
-            comp = eco.composition()
+            # Standing biomass per species, on the census's absolute scale:
+            # what the MODEL believes, not what the renderer drew. This is
+            # the file tools/check_biogeography.py reads.
+            ab = {k: a for k, _, _, a in eco.census()}
             log.append((int(eco.t), la, lo, eco.env.temperature(eco.t, 2.0),
                         eco.env.mixed_layer_depth(eco.t),
                         eco.env.deep_nitrate(eco.t), eco.env.iron(eco.t),
-                        eco.biomass, len(eco.agents), eco.n_zoo)
-                       + tuple(comp.get(k, 0.0) for k in DRIFTER_KINDS)
+                        eco.prod, eco.bottom, len(eco.agents))
+                       + tuple(ab.get(k, 0.0) for k in F.ALL_KEYS)
                        + (track.status(eco.t),))
 
     cols = 9
