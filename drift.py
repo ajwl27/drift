@@ -2044,6 +2044,7 @@ class Ecosystem:
         # second one against your memory of the first
         self.swim_scale = SWIM_SCALE
         self.turn_scale = TURN_SCALE
+        self._acc = 0.0            # simulated days owed to the ecology
         self.snow = [[r.uniform(0, W), r.uniform(0, H),
                       r.uniform(0.6, 2.4), r.random() < 0.30]
                      for _ in range(SNOW_COUNT)]
@@ -2500,7 +2501,49 @@ class Ecosystem:
 
     # -- main step ---------------------------------------------------------
 
-    def step(self, dt):
+    # THE ECOLOGY RUNS ON ITS OWN CLOCK, NOT THE FRAME'S.
+    #
+    # At the piece's real setting -- one second per second, the whole voyage
+    # in the whole three years -- a frame at 20 fps is 5.8e-7 of a day. That
+    # number breaks two things.
+    #
+    # The first is arithmetic, and it is fatal rather than untidy. In a
+    # 32-bit float the spacing between representable values grows with the
+    # value, and `t += dt` loses any increment smaller than half a spacing.
+    # Measured: a float32 clock stepped 5.787e-7 at a time stops advancing
+    # **on day 16** -- silently, with every organism still swimming and every
+    # screen still cycling, while the voyage never leaves the Atlantic. By
+    # day 1018 the spacing is 6.1e-5, a hundred times the step.
+    #
+    # Stepping the ecology at ECO_DT makes the smallest increment 0.042 days,
+    # which is seven hundred times the spacing at the end of the voyage and
+    # entirely safe in single precision. This is not a tidiness argument.
+    #
+    # The second is that the model was calibrated at dt = 1/24 day and the
+    # sweeps ran at 1/6. Handing it steps a million times smaller is not more
+    # accurate, it is the same answer computed a million times over -- and it
+    # costs 1.7 ms of the frame budget to get it.
+    #
+    # So: swimming every frame, because that is a real-time behaviour and the
+    # eye is watching it. Ecology once an hour of simulated time, which at
+    # 1:1 is once an hour of real time, and which nobody can see happening.
+    ECO_DT = 1.0 / 24.0
+
+    def advance(self, dt_days):
+        """One frame. Use this rather than step() from anything with a frame
+        rate; step() is the physics and this is the schedule."""
+        self._acc += dt_days
+        if self._acc >= self.ECO_DT:
+            # substep when the speed control is wound up, so a day a second
+            # is still integrated at the resolution the model was built for
+            n = max(1, min(64, int(self._acc / self.ECO_DT)))
+            chunk = self._acc / n
+            for _ in range(n):
+                self.step(chunk, swim=False)
+            self._acc = 0.0
+        self._swim(dt_days)
+
+    def step(self, dt, swim=True):
         if dt <= 0:
             return
         rng = self.rng
@@ -2547,7 +2590,8 @@ class Ecosystem:
         born = []
 
         # ---- swimming ------------------------------------------------------
-        self._swim(dt)
+        if swim:
+            self._swim(dt)
 
         # ---- advection and fade, common to everything --------------------
         for a in self.agents:
@@ -3091,8 +3135,16 @@ def preview():
     view = View()
     rot = Rotation(GALLERY)
     comp = Compositor()
-    speed = PRESETS[1]          # 1 min per second: a voyage day every 24 real
-    paused = False              # minutes, the whole circumnavigation in 17 days
+    # ONE SECOND PER SECOND, and this is the piece rather than a preview
+    # setting. Drake was at sea for 1018 days; so is this. A gift that takes
+    # two years and nine months to round the Horn is saying something about
+    # the voyage that no amount of compression can, and it is the reason the
+    # motion was tuned where it was -- at 1:1 the only thing that changes on
+    # a human timescale is the swimming, so the swimming has to be right.
+    #
+    # The wheel still works. It is for looking ahead, not for living in.
+    speed = PRESETS[0]
+    paused = False
     toast = 0.0                 # seconds left on the transient speed readout
     shot = 0
 
@@ -3153,11 +3205,10 @@ def preview():
 
         eco.time_compression = speed * 86400.0
         if not paused:
-            dt = real_dt * speed
-            # sub-step so fast-forward stays numerically sane
-            steps = max(1, min(64, int(dt / 0.015) + 1))
-            for _ in range(steps):
-                eco.step(dt / steps)
+            # advance(), not step(): swimming every frame and the ecology on
+            # its own clock. The substepping that used to live here moved in
+            # there, where it belongs.
+            eco.advance(real_dt * speed)
             # home again. The second circumnavigation gets a fresh seed, so
             # the same ocean grows a different community -- one line, and it
             # is the difference between a loop and a repeat.

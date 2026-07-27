@@ -1029,6 +1029,103 @@ Ranked by probability × damage.
 
 ---
 
+## 10o. **One second per second** — and what that actually costs
+
+The piece runs at 1:1. Drake was at sea for 1018 days; so is this. A gift
+begun on 27 July 2026 rounds the Horn in the southern spring of 2027 and
+comes home on **10 May 2029**.
+
+That is the whole argument for the object, stated in the only currency that
+cannot be faked. Every compressed version -- a day a second, a year an
+evening -- is a *description* of how long a circumnavigation took. This one
+is the thing itself, and it is why the motion was tuned where it was: at 1:1
+the only thing that changes on a human timescale is the swimming, so the
+swimming has to be right, and 0.09 rather than 0.22 is what an eye that has
+nothing else to look at asks for.
+
+The wheel still works. It is for looking ahead, not for living in.
+
+### It broke the clock, in single precision, on day 16
+
+At 1:1 and 20 fps a frame is **5.787e-7 days**. In a 32-bit float the spacing
+between representable values grows with the value, and `t += dt` loses any
+increment below half a spacing. Measured, not estimated:
+
+| day | float32 spacing | frame dt |
+|---|---|---|
+| 10 | 9.5e-7 | 5.8e-7 |
+| **16** | **1.9e-6** | 5.8e-7 |
+| 1018 | 6.1e-5 | 5.8e-7 |
+
+A float32 clock stepped one frame at a time **stops advancing on day 16** --
+silently, with every organism still swimming and every screen still cycling,
+while the voyage never leaves the Atlantic. On an ESP32-S3, whose FPU is
+single-precision, that is what would have shipped.
+
+### So the ecology runs on its own clock
+
+`Ecosystem.advance(dt)` replaces `step()` as the thing a frame calls.
+Swimming every frame, because that is a real-time behaviour and the eye is
+watching it. Ecology once per `ECO_DT = 1/24` day, which at 1:1 is once an
+hour, and which nobody can see happening.
+
+Three things fall out, and all three are the point rather than a bonus:
+
+- **The clock survives.** The smallest increment reaching `self.t` is 0.042
+  days, seven hundred times the float32 spacing at the end of the voyage.
+- **The model is integrated where it was calibrated.** It was built at
+  dt = 1/24 and swept at 1/6. Handing it steps a million times smaller is not
+  more accurate; it is the same answer computed a million times over.
+- **The frame got cheaper.** Simulation cost per frame fell from **1.73 ms to
+  0.038 ms**, which is the swimming plus the amortised hourly step.
+
+The substepping that used to live in `preview()` moved into `advance()`,
+where it belongs -- so a day a second is still integrated at 1/24 and the
+speed control cannot outrun the model.
+
+### The hour is the unit
+
+Screen timing is now set in **one-hour cycles**, because that is the unit a
+person in a room actually has: you walk past the thing twice in an evening and
+you want to have seen the chart. Within the hour the map appears **twice** and
+the key plate **twice**, so the longest wait for either is about half an hour.
+
+`SEQUENCE` is `WATER MAP WATER KEY WATER MAP WATER KEY`, and **`Cadence.water`
+is derived rather than typed**:
+
+    water = (cycle - 2 x map - 2 x key) / 4
+
+Lengthen the dolly and the water shortens to pay for it; the hour stays an
+hour. The alternative is a table of five numbers that has to be re-added by
+hand every time one of them moves, and that table is wrong the first time
+somebody forgets.
+
+| | GALLERY | EXHIBIT |
+|---|---|---|
+| cycle | 3600 s | 600 s |
+| water | 720 s x 4 | 94 s x 4 |
+| map | 180 s x 2 | 42 s x 2 |
+| key | 180 s x 2 | 70 s x 2 |
+| water share | 80% | 63% |
+
+### The honest accounting
+
+Both changes hit the frame budget in opposite directions and very nearly
+cancel:
+
+| | ms |
+|---|---|
+| before | 1.73 sim + 2.69 render = **4.42** |
+| after | 0.04 sim + 4.18 render = **4.22** |
+
+Decoupling the ecology saved 1.7 ms. Showing the chart twice an hour instead
+of once every thirty-six minutes spent 1.5 of it back, because the chart
+costs 11.6 ms against the water's 3.3 and went from 0.8% of the cycle to 10%.
+Both were the right call and the battery barely noticed: 24 days at 20 fps
+against 23.
+
+---
+
 ## 10n. The defaults, chosen by eye, and what they cost
 
 Everything below was set with `tools/console.py` and pasted back. That is what

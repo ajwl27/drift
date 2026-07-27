@@ -174,7 +174,10 @@ PARAMS = [
           fmt="%.0f", unit=" s", group="GAIT"),
     Param("fps", "frame rate", 0.25, 51.0, float(drift.TARGET_FPS), log=True,
           fmt="%.2f", unit=" fps", group="PANEL"),
-    Param("tcomp", "time", 1.0, 86400.0, 60.0, log=True, snap=TCOMPS,
+    # 1.0 is the piece's real setting: one second per second, the whole
+    # voyage in the whole three years. Everything else on this panel was
+    # tuned while looking at it there.
+    Param("tcomp", "time", 1.0, 86400.0, 1.0, log=True, snap=TCOMPS,
           group="PANEL"),
     # These two do not feed the model; they choose which community you are
     # looking at, and changing either means a fresh spin-up. So they are
@@ -310,7 +313,7 @@ class Side:
         dt_real = self.acc
         self.acc = 0.0
         apply_state(self.st, self.eco)
-        self.eco.step(dt_real * self.st["tcomp"] / 86400.0)
+        self.eco.advance(dt_real * self.st["tcomp"] / 86400.0)
         self._measure(dt_real)
         self.frames += 1
 
@@ -732,7 +735,7 @@ def run(seed=5, day=420.0):
                     # actually do: "run" plays the whole camera move on the
                     # cadence's own clock, looping, so the move can be judged
                     # as a move rather than as three photographs of it.
-                    cad = Cadence(GALLERY.water, side.st["globe"],
+                    cad = Cadence(GALLERY.cycle, side.st["globe"],
                                   side.st["dolly"], side.st["chart"],
                                   side.st["key"], GALLERY.fade)
                     if zoom == 3:

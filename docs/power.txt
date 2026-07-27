@@ -1,4 +1,4 @@
-Frame: sim 1.73 + render 2.69 (cadence-weighted) = 4.42 ms in CPython
+Frame: sim 0.04 + render 4.18 (cadence-weighted) = 4.22 ms in CPython
 
 Panel: 300 x 400, the 4.2in RLCD, and where the frame costs were
 measured. Other panels are scaled from it by pixel count.
@@ -8,14 +8,14 @@ measured. Other panels are scaled from it by pixel count.
                         duty   MCU mA  panel mA  total mA    days range (C 2x-0.5x)  
 one frame per 4 s       0.1%     2.46     0.021      2.48      49     48 - 49      the panel's slowest setting
 1 fps                   0.4%     2.55     0.039      2.59      47     45 - 48      a clock, not an aquarium
-2 fps                   0.9%     2.67     0.062      2.74      44     41 - 46      
-5 fps                   2.2%     3.04     0.133      3.17      38     32 - 42      motion, visibly stepped
-8 fps                   3.5%     3.40     0.204      3.60      34     27 - 39      
-10 fps                  4.4%     3.64     0.251      3.89      31     24 - 37      floor for the fastest swimmer to read
-15 fps                  6.6%     4.24     0.369      4.61      27     19 - 33      assumed at the first design conversation
-20 fps                  8.8%     4.85     0.487      5.33      23     16 - 30      the preview's rate
-30 fps                 13.3%     6.05     0.723      6.78      18     12 - 25      
-51 fps                 22.5%     8.59     1.219      9.80      13      8 - 18      the panel's maximum
+2 fps                   0.8%     2.66     0.062      2.72      45     41 - 46      
+5 fps                   2.1%     3.01     0.133      3.14      39     33 - 43      motion, visibly stepped
+8 fps                   3.4%     3.35     0.204      3.56      34     27 - 39      
+10 fps                  4.2%     3.58     0.251      3.83      32     25 - 37      floor for the fastest swimmer to read
+15 fps                  6.3%     4.16     0.369      4.53      27     20 - 33      assumed at the first design conversation
+20 fps                  8.4%     4.73     0.487      5.22      24     16 - 30      the preview's rate
+30 fps                 12.7%     5.89     0.723      6.61      19     12 - 25      
+51 fps                 21.5%     8.30     1.219      9.52      13      8 - 19      the panel's maximum
 
 'days' is at the central C-factor; the range sweeps it 0.5x-2x,
 which is the honest width of the extrapolation to C on the M33.
@@ -23,12 +23,12 @@ which is the honest width of the extrapolation to C on the M33.
 === 2. What each step down in frame rate actually buys ===
 
                  total mA     days   gain on the last
-51 fps               9.80       13   
-30 fps               6.78       18   1.44x
-20 fps               5.33       23   1.27x
-10 fps               3.89       31   1.36x
-5 fps                3.17       38   1.22x
-2 fps                2.74       44   1.15x
+51 fps               9.52       13   
+30 fps               6.61       19   1.44x
+20 fps               5.22       24   1.26x
+10 fps               3.83       32   1.35x
+5 fps                3.14       39   1.22x
+2 fps                2.72       45   1.15x
 1 fps                2.59       47   1.05x
 0.25 fps             2.48       49   1.04x
 
@@ -46,38 +46,38 @@ is, and frame rate is only a 4x lever end to end. Get the idle
 down to 0.27 mA and the same span becomes a 20x lever.
 
              stock Pico 2  tuned board   ratio
-51 fps              13 d         15 d   1.2x
-30 fps              18 d         25 d   1.4x
-20 fps              23 d         36 d   1.6x
-15 fps              27 d         47 d   1.8x
-10 fps              31 d         66 d   2.1x
-5 fps               38 d        110 d   2.9x
-2 fps               44 d        185 d   4.2x
-1 fps               47 d        239 d   5.1x
-0.25 fps            49 d        307 d   6.3x
+51 fps              13 d         16 d   1.2x
+30 fps              19 d         26 d   1.4x
+20 fps              24 d         38 d   1.6x
+15 fps              27 d         48 d   1.8x
+10 fps              32 d         68 d   2.1x
+5 fps               39 d        113 d   2.9x
+2 fps               45 d        188 d   4.2x
+1 fps               47 d        242 d   5.2x
+0.25 fps            49 d        308 d   6.3x
 
 Until the sleep current is dealt with, dropping the frame rate
 is fighting the wrong number.
 
 === 3. The other levers, all at 20 fps ===
 
-as it stands                                        5.33 mA     23 d   
-frame cost halved (better C, or partial update)     4.13 mA     30 d   1.29x
-custom board, tuned idle (0.27 mA)                  3.36 mA     36 d   1.59x
-both together                                       2.06 mA     58 d   2.59x
-...and 10 fps as well                               1.17 mA    100 d   4.55x
+as it stands                                        5.22 mA     24 d   
+frame cost halved (better C, or partial update)     4.07 mA     30 d   1.28x
+custom board, tuned idle (0.27 mA)                  3.24 mA     38 d   1.61x
+both together                                       2.00 mA     60 d   2.61x
+...and 10 fps as well                               1.14 mA    102 d   4.57x
 
-Halving the frame cost buys 1.29x and halving the frame rate
-buys 1.36x -- the same lever, because duty cycle is frame_ms x fps
+Halving the frame cost buys 1.28x and halving the frame rate
+buys 1.35x -- the same lever, because duty cycle is frame_ms x fps
 and it does not care which factor you shrink. One of them costs
 you the motion and the other costs you nothing to look at.
 
 === 4. The panel is not the problem ===
 
     1 fps:  MCU   2.55 mA (99%)    panel 0.039 mA (1%)
-   10 fps:  MCU   3.64 mA (94%)    panel 0.251 mA (6%)
-   20 fps:  MCU   4.85 mA (91%)    panel 0.487 mA (9%)
-   51 fps:  MCU   8.59 mA (88%)    panel 1.219 mA (12%)
+   10 fps:  MCU   3.58 mA (93%)    panel 0.251 mA (7%)
+   20 fps:  MCU   4.73 mA (91%)    panel 0.487 mA (9%)
+   51 fps:  MCU   8.30 mA (87%)    panel 1.219 mA (13%)
 
 A reflective LCD has no backlight, so being looked at is free.
 Even at its 51 Hz maximum the panel draws about a milliamp, a
@@ -86,16 +86,16 @@ having is on the compute side.
 
 === 5. Cells, at the rates the piece is likely to run ===
 
-  at 10 fps (3.89 mA):
-      18650, 3000 mAh             31 days  (1.0 months)
-      2 x 18650                   63 days  (2.1 months)
+  at 10 fps (3.83 mA):
+      18650, 3000 mAh             32 days  (1.0 months)
+      2 x 18650                   64 days  (2.1 months)
       LiPo pouch, 1200 mAh        13 days  (0.4 months)
-      4 x AA alkaline             25 days  (0.8 months)
-  at 20 fps (5.33 mA):
-      18650, 3000 mAh             23 days  (0.8 months)
-      2 x 18650                   46 days  (1.5 months)
+      4 x AA alkaline             26 days  (0.8 months)
+  at 20 fps (5.22 mA):
+      18650, 3000 mAh             24 days  (0.8 months)
+      2 x 18650                   47 days  (1.6 months)
       LiPo pouch, 1200 mAh         9 days  (0.3 months)
-      4 x AA alkaline             18 days  (0.6 months)
+      4 x AA alkaline             19 days  (0.6 months)
 
 Self-discharge (83 uA) is included. Below about half a
 milliamp total it is a significant fraction, and no design
@@ -105,15 +105,15 @@ gets under it.
 
                                    10 fps mA    days 20 fps mA    days
   2.7in, 240x400   96000 px, render x0.80
-    RP2350, stock Pico 2                3.69      33      4.94      25
-    ESP32-S3, dev board as bought       9.15      14     10.28      12
-    ESP32-S3, own PCB, light sleep      1.84      65      3.27      37
-    ESP32-S3, own PCB, tuned hard       1.60      74      3.04      40
+    RP2350, stock Pico 2                3.56      34      4.67      26
+    ESP32-S3, dev board as bought       9.03      14     10.04      12
+    ESP32-S3, own PCB, light sleep      1.68      71      2.95      41
+    ESP32-S3, own PCB, tuned hard       1.44      82      2.72      45
   4.2in, 300x400   120000 px, render x1.00
-    RP2350, stock Pico 2                3.89      31      5.33      23
-    ESP32-S3, dev board as bought       9.33      13     10.64      12
-    ESP32-S3, own PCB, light sleep      2.06      58      3.71      33
-    ESP32-S3, own PCB, tuned hard       1.82      66      3.48      35
+    RP2350, stock Pico 2                3.83      32      5.22      24
+    ESP32-S3, dev board as bought       9.28      13     10.54      12
+    ESP32-S3, own PCB, light sleep      2.00      60      3.58      34
+    ESP32-S3, own PCB, tuned hard       1.76      68      3.35      36
 
 The MCU's sleep current decides this and nothing else does. An
 ESP32-S3 in light sleep idles ten times lower than an RP2350, and

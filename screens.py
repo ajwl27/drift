@@ -30,19 +30,45 @@ from mapview import render_map, R_GLOBE, R_CHART, zoom_radius
 from keyplate import render_key
 
 WATER, MAP, KEY = range(3)
-SEQUENCE = (WATER, MAP, WATER, KEY)
+
+# Twice round per cycle. One appearance of each per hour is too few to catch
+# -- a visitor who looks up at the wrong moment waits an hour for the chart --
+# and it also wastes the fact that both interludes now END where they began,
+# so a second run costs nothing structurally.
+SEQUENCE = (WATER, MAP, WATER, KEY, WATER, MAP, WATER, KEY)
 
 
 class Cadence:
-    __slots__ = ("water", "globe", "dolly", "chart", "key", "fade")
+    """THE CYCLE IS THE CONSTANT, AND THE WATER IS THE REMAINDER.
 
-    def __init__(self, water, globe, dolly, chart, key, fade):
-        self.water = water
+    Timing is set in one-hour cycles, because that is the unit a person in a
+    room actually has: you walk past the thing twice in an evening and you
+    want to have seen the chart. Within the hour the map appears twice and
+    the key plate twice, so the longest anyone waits for either is about half
+    an hour.
+
+    The water duration is therefore *derived*, not typed. Lengthen the dolly
+    and the water shortens to pay for it, and the hour stays an hour --
+    which matters because the alternative is a table of five numbers that
+    have to be re-added by hand every time one of them moves, and that table
+    is wrong the first time somebody forgets."""
+
+    __slots__ = ("cycle", "globe", "dolly", "chart", "key", "fade")
+
+    def __init__(self, cycle, globe, dolly, chart, key, fade):
+        self.cycle = cycle
         self.globe = globe
         self.dolly = dolly
         self.chart = chart
         self.key = key
         self.fade = fade
+
+    @property
+    def water(self):
+        busy = (SEQUENCE.count(MAP) * self.duration(MAP)
+                + SEQUENCE.count(KEY) * self.key)
+        n = max(1, SEQUENCE.count(WATER))
+        return max(20.0, (self.cycle - busy) / n)
 
     def duration(self, screen):
         if screen == WATER:
@@ -69,9 +95,9 @@ class Cadence:
 # long. That sounds extravagant until you notice it is 7% of a cycle whose
 # water segments are eighteen minutes each -- and that a camera move you can
 # watch without noticing it is a camera move has to be about this slow.
-GALLERY = Cadence(water=18 * 60, globe=30.0, dolly=60.0, chart=30.0,
+GALLERY = Cadence(cycle=3600.0, globe=30.0, dolly=60.0, chart=30.0,
                   key=180.0, fade=1.5)
-EXHIBIT = Cadence(water=45.0, globe=6.0, dolly=14.0, chart=8.0,
+EXHIBIT = Cadence(cycle=600.0, globe=6.0, dolly=14.0, chart=8.0,
                   key=70.0, fade=1.0)
 
 EXHIBIT_LAPSE = 300.0          # seconds before EXHIBIT falls back to GALLERY

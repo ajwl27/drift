@@ -28,23 +28,29 @@ asleep.
 # --------------------------------------------------------------------------
 #
 #   e = Ecosystem(seed=5, ...) spun to day 300, 41 agents, 300 x 400 panel
-#   timeit(lambda: e.step(dt))                        -> 1.73 ms
-#   timeit(lambda: draw_screen(c, WATER, ...))        -> 2.61 ms
+#   timeit(lambda: e.advance(dt))                     -> 0.038 ms  (!)
+#   timeit(lambda: draw_screen(c, WATER, ...))        -> 3.33 ms
 #   timeit(lambda: draw_screen(c, MAP, ...))          -> 11.62 ms
 #   timeit(lambda: draw_screen(c, KEY, ...))          -> 3.53 ms
 #
-# Re-measured after the legibility pass. Everything went up, and the type is
-# most of why: a glyph at scale 3 is 105 filled pixels where it used to be
-# about 8, so the key plate more than doubled. It is still 0.7% of the
-# cadence, so it moves the average by nothing.
-SIM_MS = 1.73
-REN_MS = {"water": 2.61, "map": 11.62, "key": 3.53}
+# SIM_MS collapsed from 1.73 to 0.038 and that is not an optimisation, it is
+# the piece running at its real speed. At one second per second a frame is
+# 5.8e-7 of a day, so Ecosystem.advance() does the swimming every frame and
+# calls the ecology once an hour of simulated time -- which at 1:1 is once an
+# hour. 0.038 ms is the swimming plus the amortised cost of that hourly step.
+SIM_MS = 0.038
+REN_MS = {"water": 3.33, "map": 11.62, "key": 3.53}
 
-# GALLERY cadence, from screens.py: water 1080 s, map 18 s, water 1080 s,
-# key 15 s. The map costs four times the water view and occupies 0.8% of the
-# time, so it contributes 3% of the render budget: worth knowing, not worth
-# optimising.
-CADENCE = {"water": 2160.0, "map": 18.0, "key": 15.0}
+# GALLERY cadence, from screens.py: a one-hour cycle carrying the map twice
+# and the key plate twice, so 4 x 720 s of water, 2 x 180 s of map and
+# 2 x 180 s of key.
+#
+# The map is now 10% of the hour rather than 0.8%, and it costs three and a
+# half times a water frame, so it went from a rounding error to a fifth of
+# the render budget. Which is the honest accounting on this: decoupling the
+# ecology saved 1.7 ms a frame and showing the chart four times as often
+# spent most of it back. Both were the right call and they nearly cancel.
+CADENCE = {"water": 2880.0, "map": 360.0, "key": 360.0}
 
 
 def render_ms():
