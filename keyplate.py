@@ -427,8 +427,26 @@ def draw_header(c, track, day, y0=8):
 # If the list fits, nothing moves at all. That is the common case in a gyre,
 # and a plate that jiggles when it has no need to would be the worst of both.
 
-PAN_HOLD = 0.13            # fraction of the dwell spent still, at each of
-                           # the three rests: top, bottom, top again
+# THE SAME SHAPE AS THE MAP, FOR THE SAME REASON.
+#
+#     top      x        still
+#     down     3x       moving
+#     bottom   x        still
+#     up       3x       moving
+#     top      x        still
+#
+# Three rests and two moves, and the moves three times the rests -- so at a
+# 270 s dwell that is 30 s reading the head of the list, ninety seconds
+# travelling, 30 s at the foot, ninety back, and 30 s at the head again.
+#
+# The long travel is the point and it took a correction to get to. Short
+# travels make the rests do all the reading, which means the middle of a long
+# census is only ever seen flashing past. At ninety seconds the pan runs at
+# about thirteen pixels a second and a row takes six seconds to cross, which
+# is slow enough to read while it moves -- so every row gets read, and none
+# of it moves fast enough to catch the eye of somebody who is not looking.
+PAN_STILL = 1.0            # relative length of each of the three rests
+PAN_MOVE = 3.0             # ... and of each of the two travels
 
 
 def _pan(t_into, dwell, span):
@@ -436,27 +454,29 @@ def _pan(t_into, dwell, span):
     are.
 
     Down, then back up. A one-way pan ends with the list at the bottom and
-    the top of it out of sight, which means the plate spends its last moment
-    showing you the least interesting end and then cuts away -- and the next
-    time it appears it starts from the top again, so the transition is a
-    jump. There and back leaves it where it started, and gives a visitor two
-    passes at a list they may only have half read the first time.
+    the top of it out of sight, so the plate spends its last moment showing
+    the least interesting end and then cuts away -- and next time it appears
+    it starts from the top again, so the transition is a jump. There and back
+    leaves it where it started, and gives a visitor two passes at a list they
+    may only have half read the first time.
 
-    Three rests: at the top, at the bottom of the travel, and at the top
-    again. Eased at every one of them, because a linear pan starts and stops
-    with a visible jerk and a reversal without a rest reads as a bounce."""
+    Eased at every rest, because a linear pan starts and stops with a visible
+    jerk and a reversal without a rest reads as a bounce."""
     if span <= 0 or dwell <= 0:
         return 0.0
-    f = max(0.0, min(1.0, t_into / dwell))
-    leg = (1.0 - 3.0 * PAN_HOLD) / 2.0          # each travel, as a fraction
-    if f < PAN_HOLD:
+    unit = dwell / (3.0 * PAN_STILL + 2.0 * PAN_MOVE)
+    still = unit * PAN_STILL
+    move = unit * PAN_MOVE
+    t = max(0.0, t_into)
+    if t < still:
         return 0.0
-    if f < PAN_HOLD + leg:
-        u = (f - PAN_HOLD) / leg
-    elif f < 2.0 * PAN_HOLD + leg:
+    t -= still
+    if t < move:
+        u = t / move
+    elif t < move + still:
         return span
-    elif f < 2.0 * PAN_HOLD + 2.0 * leg:
-        u = 1.0 - (f - 2.0 * PAN_HOLD - leg) / leg
+    elif t < 2.0 * move + still:
+        u = 1.0 - (t - move - still) / move
     else:
         return 0.0
     u = max(0.0, min(1.0, u))
@@ -466,7 +486,10 @@ def _pan(t_into, dwell, span):
 def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,
                t_into=0.0, dwell=0.0, t=None):
     canvas.clear()
-    t = eco.t * 86400.0 if t is None else t     # real seconds, for the gaits
+    # REAL seconds, not simulated ones. eco.t is a staircase now -- it moves
+    # once per simulated hour -- and a gait driven off a staircase does not
+    # move at all in between.
+    t = eco.real_t if t is None else t
 
     top = draw_header(canvas, track, day) if chrome else 10
     canvas.line(10, top, w - 11, top)

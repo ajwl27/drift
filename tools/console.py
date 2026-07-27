@@ -195,13 +195,13 @@ PARAMS = [
     # speed: the key plate pans its whole list over its dwell and the map
     # dollies globe-to-chart over its own, so both are set here rather than
     # by a pixels-per-second nobody can picture.
-    Param("key", "key dwell", 20.0, 240.0, GALLERY.key, log=True,
+    Param("key", "key dwell", 30.0, 600.0, GALLERY.key, log=True,
           fmt="%.0f", unit=" s", group="TIMING"),
-    Param("globe", "map: globe", 0.0, 12.0, GALLERY.globe, fmt="%.1f",
+    Param("globe", "map: globe x2", 0.0, 90.0, GALLERY.globe, fmt="%.0f",
           unit=" s", group="TIMING"),
-    Param("dolly", "map: zoom", 1.0, 40.0, GALLERY.dolly, log=True,
-          fmt="%.1f", unit=" s", group="TIMING"),
-    Param("chart", "map: chart", 0.0, 24.0, GALLERY.chart, fmt="%.1f",
+    Param("dolly", "map: zoom x2", 5.0, 240.0, GALLERY.dolly, log=True,
+          fmt="%.0f", unit=" s", group="TIMING"),
+    Param("chart", "map: chart", 0.0, 120.0, GALLERY.chart, fmt="%.0f",
           unit=" s", group="TIMING"),
     # The plate's motion is deliberately NOT the water's. See keyplate.py:
     # the water is a scene watched at a distance, the plate is one specimen
@@ -540,10 +540,10 @@ def run(seed=5, day=420.0):
                    % (side.spin, side.speed, len(side.eco.agents)))
 
         screen.blit(small.render(readout, True, DIM), (x, y + 20))
-        lat, lon = track.position(side.eco.t)
+        lat, lon = track.position(side.eco.now)
         sub = ("day %.1f   %.1f%s %.1f%s   %s"
-               % (side.eco.t, abs(lat), "NS"[lat < 0], abs(lon),
-                  "EW"[lon < 0], track.status(side.eco.t)))
+               % (side.eco.now, abs(lat), "NS"[lat < 0], abs(lon),
+                  "EW"[lon < 0], track.status(side.eco.now)))
         screen.blit(small.render(sub, True, DIM), (x, y + 36))
         if true_size:
             mm = 25.4 / max(live.st["ppi"], 1.0)
@@ -750,7 +750,7 @@ def run(seed=5, day=420.0):
                         R = map_radius(side.map_t, cad)
                     else:
                         R = (R_GLOBE, zoom_radius(0.55), R_CHART)[zoom]
-                    render_map(side.canvas, coast, track, side.eco.t, R,
+                    render_map(side.canvas, coast, track, side.eco.now, R,
                                chrome=view.plate)
                 elif scr == KEY:
                     # drive the pan from a wall clock the console owns, so
@@ -758,7 +758,7 @@ def run(seed=5, day=420.0):
                     # cadence to come round to it
                     side.key_t = ((side.key_t + 1.0 / side.st["fps"])
                                   % side.st["key"])
-                    render_key(side.canvas, side.eco, track, side.eco.t,
+                    render_key(side.canvas, side.eco, track, side.eco.now,
                                chrome=view.plate, t_into=side.key_t,
                                dwell=side.st["key"])
                 else:

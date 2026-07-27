@@ -1108,6 +1108,68 @@ somebody forgets.
 | key | 180 s x 2 | 70 s x 2 |
 | water share | 80% | 63% |
 
+### The shape of the interlude, and a correction
+
+The map runs **globe / in / chart / out / globe** with the still phases at
+each end. Sizing it is one number, the dolly, and it is decided by the rate
+rather than by the fraction of the segment:
+
+| dolly | peak rate | scale change in a 3 s glance |
+|---|---|---|
+| 30 s | 11.9%/s | **40%** |
+| 60 s | 5.8%/s | 18% |
+| **90 s** | **3.8%/s** | **12%** |
+| 120 s | 2.8%/s | 9% |
+
+"Does not move drastically while looked at" is a claim about the third
+column, and 40% is not it -- which is why the first attempt, with the moves
+*shorter* than the rests, was wrong. At 90 s a glance sees about a tenth,
+which is on the edge of noticing, and 90 s is still short enough that looking
+away and back finds a different picture. Film calls 2-4% a second a creep;
+this sits at the top of that.
+
+The two rests are deliberately unequal, which breaks the neat single-x
+formula on purpose: the chart has names, a coastline and the ship on it and
+rewards forty seconds, while the globe -- now that its labels wait for the
+zoom -- is a still picture of the Earth and says what it has to say in
+twenty-five.
+
+**globe 25, in 90, chart 40, out 90, globe 25 = 270 s.**
+
+The key plate takes the same shape and the same argument: three rests of 30 s
+and two travels of 90, also 270 s. The long travel is the point. Short
+travels make the rests do all the reading, so the middle of a long census is
+only ever seen flashing past; at ninety seconds the pan runs at about
+thirteen pixels a second and a row takes six seconds to cross, which is slow
+enough to read *while it moves*. Every row gets read, and nothing moves fast
+enough to catch the eye of somebody who is not looking.
+
+The hour, then: **10.5 min water x4, 4.5 min map x2, 4.5 min key x2**. Water
+is 70% of it.
+
+### Two clocks, because the ecology stopped running every frame
+
+Decoupling had a consequence that took a report from across the room to find.
+`self.t` now advances in ECO_DT jumps -- once per simulated hour -- and the
+key plate took its animation clock from `t * 86400`. A gait driven off a
+staircase does not move at all in between, so the specimens froze solid for
+an hour and then jumped. Measured: **zero simulated seconds elapsed over
+three real seconds** at 1:1. From a sofa that reads as imperceptibly slow
+swimming, which is exactly what was reported.
+
+So the Ecosystem carries three:
+
+| | | |
+|---|---|---|
+| `t` | simulated days | the model's own clock, ECO_DT staircase |
+| `now` | `t + _acc` | the same without the staircase, for anything a person reads |
+| `real_t` | real seconds | what every animation runs on |
+
+`real_t` is incremented inside `_swim`, because that is the one thing that
+runs on every frame whatever else does -- and it uses the same
+time-compression division `_swim` already had, so the plate and the water are
+on one clock by construction rather than by coincidence.
+
 ### The honest accounting
 
 Both changes hit the frame budget in opposite directions and very nearly

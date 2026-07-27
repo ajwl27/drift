@@ -2045,6 +2045,21 @@ class Ecosystem:
         self.swim_scale = SWIM_SCALE
         self.turn_scale = TURN_SCALE
         self._acc = 0.0            # simulated days owed to the ecology
+        # Two clocks, and both are needed once the ecology stops running
+        # every frame.
+        #
+        #   self.t    simulated days, and it now advances in ECO_DT jumps
+        #   self.now  the same thing without the staircase, for anything a
+        #             person reads: position, date, progress bar
+        #   real_t    REAL seconds since the start, which is what any
+        #             animation has to run on
+        #
+        # The key plate used to take its clock from `t * 86400`, which was
+        # right only because `t` used to move every frame. The moment the
+        # ecology went hourly the specimens froze solid for an hour at a
+        # time and then jumped -- which reads, from across a room, as
+        # imperceptibly slow swimming.
+        self.real_t = 0.0
         self.snow = [[r.uniform(0, W), r.uniform(0, H),
                       r.uniform(0.6, 2.4), r.random() < 0.30]
                      for _ in range(SNOW_COUNT)]
@@ -2340,6 +2355,9 @@ class Ecosystem:
         diffusivity, D = v^2 * tau, or the displacement per step diverges."""
         rng = self.rng
         dt_s = dt * 86400.0 / max(1.0, self.time_compression)
+        # the animation clock, advanced here because _swim is the one thing
+        # that runs on every frame whatever else does
+        self.real_t += dt_s
         zpx = (H - TOP_M - BOT_M) / Z_MAX
         slow = max(1e-3, self.swim_scale)     # the slow-motion factor
         body_k = 1.0 - math.exp(-dt_s / BODY_TAU)
@@ -2528,6 +2546,12 @@ class Ecosystem:
     # eye is watching it. Ecology once an hour of simulated time, which at
     # 1:1 is once an hour of real time, and which nobody can see happening.
     ECO_DT = 1.0 / 24.0
+
+    @property
+    def now(self):
+        """Simulated days, including the fraction not yet handed to the
+        ecology. Use this for anything displayed; use `t` inside the model."""
+        return self.t + self._acc
 
     def advance(self, dt_days):
         """One frame. Use this rather than step() from anything with a frame
