@@ -1029,6 +1029,80 @@ Ranked by probability × damage.
 
 ---
 
+## 10g. The two numbers that cannot be reasoned to — **the development build**
+
+Almost everything in this piece was argued from a source. Growth rates come from
+Edwards 2012, the temperature envelope from Eppley, predator:prey ratios from
+Hansen 1994, swimming speeds in body lengths per second from the swimming
+literature. That is a good way to build most of it, and it is why the model
+survived contact with a satellite.
+
+Two numbers are not like that.
+
+**`SWIM_SCALE`** is the single global multiplier on all motion. The literature
+fixes the *ratios* — a flagellate at 14 BL/s really is fourteen times as busy as
+a copepod at 1.1 — but the absolute figure has to survive a translation the
+papers never make: a 40 µm cell drawn 12 px across, on a panel refreshing at
+some rate, viewed from across a room. There is no correct answer to recover.
+There is only what looks like drifting rather than skittering.
+
+**`TARGET_FPS`** is the same kind of number. The power model says what each
+rate costs; it cannot say which one reads as *alive*.
+
+So both are set by eye — but by eye done properly.
+
+### Why four at once
+
+The obvious tool is a slider: one panel, tune it up and down, stop when it looks
+right. That tool is useless, and predictably so. Memory for motion is very poor.
+Everything looks correct while you are adjusting it, because you are watching the
+*change*, not the state; come back thirty seconds later and it looks wrong again.
+You end up oscillating and calling the last position a decision.
+
+`tools/tune.py` runs **four ecosystems side by side**, from the **same seed**,
+stepped identically, differing only in the parameter under test. Same organisms,
+same positions, same genomes — so the only thing your eye can be responding to
+is the motion. The judgement then takes about four seconds instead of ten
+minutes, and it is a real comparison rather than a comparison against a memory.
+
+    python3 tools/tune.py            # swimming speed
+    python3 tools/tune.py fps        # frame rate
+
+    left/right   shift the whole range      up/down   spread or tighten it
+    1 2 3 4      choose a panel; prints the value to paste into drift.py
+    space pause   r reseed   esc quit
+
+In `fps` mode the window still runs at 60 Hz and each panel **holds its frame**
+for `round(60 / value)` ticks. You are not shown a description of 8 fps, you are
+shown 8 fps — including the stepping, which is the whole thing being judged.
+
+`tools/swim_gif.py` renders the same comparison as an animated GIF for judging
+away from the machine, and for arguing about later.
+
+### Why it is a separate build
+
+This is a development build. It never ships and it never ports. Putting live
+tuning keys into `preview()` — which was the first attempt — would have meant
+carrying comparison scaffolding into the file that becomes C, and `drift.py`'s
+one job is to be portable. The whole cost of keeping it separate is two lines in
+`drift.py`: `TARGET_FPS` as a named constant, and `swim_scale` promoted from a
+module constant to a per-instance attribute so four ecosystems can differ inside
+one process. Both are things the shipping file wanted anyway.
+
+The spin-up in `tune.py` steps at `1/6` day rather than the simulation's usual
+`1/24`. Four ecosystems reach day 420 in 17 seconds instead of 64. This is a
+motion tool; it needs a *plausible* community to look at, not a numerically
+careful one.
+
+### The result
+
+Pending — the values live in `drift.py` and get pasted back from the tool. What
+the plan records is the method, because the method is the defensible part: these
+two numbers are set by looking, and the tool exists so that looking is a
+controlled comparison rather than an impression.
+
+---
+
 ## 10f. What the motion costs
 
 `tools/power.py`. First-order, and every number in it is measured or from a

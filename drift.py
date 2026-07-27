@@ -55,6 +55,10 @@ import sys
 
 W, H = 240, 400            # panel resolution, portrait. Sharp 2.7" rotated.
 SCALE = 2                  # preview upscale only
+TARGET_FPS = 20            # preview frame rate. Both this and SWIM_SCALE are
+                           # judgements about how a moving thing looks, so
+                           # they are set with tools/tune.py rather than by
+                           # reasoning, and pasted back here.
 
 LAT = 52.0800              # Melbourn
 LON = 0.0200
@@ -1630,6 +1634,11 @@ class Ecosystem:
         self.agents = []
         self.det = []
         self._graze_f = 1.0
+        # per-instance so that several ecosystems with different swimming
+        # speeds can be run side by side in one process, which is the only
+        # way to compare them honestly -- sequentially you are comparing the
+        # second one against your memory of the first
+        self.swim_scale = SWIM_SCALE
         self.snow = [[r.uniform(0, W), r.uniform(0, H),
                       r.uniform(0.6, 2.4), r.random() < 0.30]
                      for _ in range(SNOW_COUNT)]
@@ -1934,7 +1943,7 @@ class Ecosystem:
                 a.ang += rng.gauss(0.0, 1.0) * math.sqrt(
                     min(dt_s, 4.0 * TUMBLE_S)) * (2.0 * math.pi / TUMBLE_S) * 0.35
                 continue
-            v = bl * 2.0 * visual_radius(a) * SWIM_SCALE      # px per second
+            v = bl * 2.0 * visual_radius(a) * self.swim_scale  # px per second
             tau = TURN_TAU.get(k, 10.0)
             if dt_s < tau:
                 a.head += rng.gauss(0.0, math.sqrt(dt_s / tau))
@@ -2640,7 +2649,7 @@ def preview():
     surf = pygame.Surface((W, H))
     running = True
     while running:
-        real_dt = clock.tick(20) / 1000.0
+        real_dt = clock.tick(TARGET_FPS) / 1000.0
         wheel = 0
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
