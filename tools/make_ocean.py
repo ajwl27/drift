@@ -68,6 +68,14 @@ Format, little-endian:
         no3       4 steps     0 .. 40 mmol/m3    255 = land
         shelf     1 step      distance to coast, 0..2000 km
         iron      1 step      0 = scarce .. 255 = replete
+        bottom    1 step      log-scaled 1..11000 m   255 = land   [v2]
+
+Version 2 appends bottom depth and changes nothing before it, so a v2 reader
+opens a v1 file and simply finds no bathymetry. The field is fetched and
+packed by tools/make_bathy.py, which is also able to add it to an existing
+file without re-downloading the 150 MB of climatology that has not changed;
+this module calls into it so that a full rebuild produces a complete v2 file
+by the same code path.
 """
 
 import math
@@ -299,7 +307,7 @@ def build(src, dst, coast="data/coast.bin"):
     no3 = [fill_gaps(g, ocean) for g in no3]
 
     blob = bytearray(b"DRFO")
-    blob += struct.pack("<BBBBB", 1, NLON, NLAT, NMON, NSEA)
+    blob += struct.pack("<BBBBB", 2, NLON, NLAT, NMON, NSEA)
 
     def emit(grid, fn, lo, hi):
         for j in range(NLAT):
@@ -318,6 +326,19 @@ def build(src, dst, coast="data/coast.bin"):
     for j in range(NLAT):
         for i in range(NLON):
             blob.append(q(iron[j, i], 0.0, 1.0))
+    # bottom depth, from ETOPO via ERDDAP. Masked with the SAME land mask as
+    # everything else, so a position can never sample a temperature and no
+    # depth -- see the note in make_bathy.py.
+    from make_bathy import cell_depths, fetch, q_log as q_log_b, \
+        BOT_LO, BOT_HI
+    depths = cell_depths(fetch(os.path.join(src, "etopo_half.csv")))
+    for j in range(NLAT):
+        for i in range(NLON):
+            if land[j, i]:
+                blob.append(LAND)
+                continue
+            d = depths[j * NLON + i]
+            blob.append(q_log_b(200.0 if d is None else d, BOT_LO, BOT_HI))
 
     with open(dst, "wb") as f:
         f.write(blob)
