@@ -89,10 +89,35 @@ import draw
 #
 #   (lo, plo, phi, hi) in metres of bottom depth, and the shore envelope in
 #   kilometres from the coastline.
-SHELF   = ((0.0,   20.0,  200.0,  1000.0), (0.0,   0.0,  250.0,  600.0))
-SLOPE   = ((50.0,  200.0, 1500.0, 4000.0), (0.0,   0.0,  500.0, 1200.0))
+#
+# WHICH OF THE TWO AXES CARRIES THE SHELF SIGNAL, AND WHY IT IS NOT DEPTH.
+#
+# The obvious design gives shelf species a shallow bottom-depth envelope and
+# is defeated by the resolution of the grid. Measured along Drake's Chilean
+# and Peruvian leg -- the most important water on the whole track -- the 2
+# degree bathymetry reports 500 to 4,300 m, mostly over 1,000. That is not an
+# error in the data: the Peru shelf is 5 to 50 km wide with the Peru-Chile
+# Trench immediately outboard of it, so a 2 degree cell genuinely averages a
+# shelf with a trench, and no interpolation recovers a feature an eighth the
+# width of a cell.
+#
+# Run against depth, the anchoveta -- the single most important species on
+# the voyage, and the largest fishery on Earth -- never appeared at all.
+#
+# Distance to coast does not have this problem. It is computed from
+# coast.bin at 0.1 degrees, twenty times finer, and along the same leg it
+# reports 35 to 190 km, which is exactly the band the anchoveta occupies and
+# is what FishBase means by "dependent on the coastal extent of the Peru
+# Current".
+#
+# So for coastal classes the SHORE axis discriminates and the DEPTH axis is
+# demoted to excluding true abyss. That is a statement about the grid rather
+# than about fish, which is why it is written here rather than hidden in
+# thirty-three species records.
+SHELF   = ((0.0,    0.0, 1000.0,  6000.0), (0.0,   0.0,  150.0,  400.0))
+SLOPE   = ((50.0,  150.0, 3000.0, 7000.0), (0.0,   0.0,  400.0,  900.0))
 OCEANIC = ((0.0,  1000.0, 6000.0, 11000.0), (0.0, 100.0, 9000.0, 9000.0))
-REEF    = ((0.0,    0.0,  100.0,   500.0), (0.0,   0.0,  120.0,  350.0))
+REEF    = ((0.0,    0.0,  600.0,  3000.0), (0.0,   0.0,   90.0,  260.0))
 # Mesopelagic species are oceanic in bathymetry but indifferent to shore --
 # the deep scattering layer is present over any water deep enough to hold it.
 MESO    = ((200.0, 800.0, 6000.0, 11000.0), (0.0, 0.0, 9000.0, 9000.0))
@@ -689,10 +714,15 @@ def reachable(key, lat, lon):
 BY_KEY = {f.key: f for f in ROSTER}
 ALL_KEYS = tuple(f.key for f in ROSTER)
 
-# The mesopelagic floor. These four are present over any deep water anywhere
-# on the track, so when nothing else suits, these are what is left -- and
-# that is not a fallback, it is the truth about a subtropical gyre.
-MESOPELAGIC = (LANTERNFISH, BRISTLEMOUTH, HATCHETFISH, VIPERFISH)
+# The mesopelagic. Present over any deep water anywhere on the track, so when
+# nothing else suits, these are what is left -- and that is not a fallback,
+# it is the truth about a subtropical gyre.
+#
+# Derived from the habitat class rather than typed out, because it is used to
+# split the panel into two bands and a species left off the list by hand
+# would be allocated to the wrong half of the screen for the rest of the
+# voyage. There is exactly one definition of "mesopelagic" in this file.
+MESOPELAGIC = tuple(f.key for f in ROSTER if f.bottom is MESO[0])
 MIGRATORS = tuple(f.key for f in ROSTER if f.dvm_day is not None)
 FORAGE = tuple(f.key for f in ROSTER if f.trophic < 3.5)
 PREDATORS = tuple(f.key for f in ROSTER if f.trophic >= 4.0)
@@ -720,24 +750,44 @@ def trapezoid(v, env):
     return (hi - v) / (hi - phi) if hi > phi else 1.0
 
 
+EPI_Z = 200.0                # the base of the sunlit zone
+SURFACE_REF = 10.0           # where "sea surface temperature" is measured
+
+
 def temp_depth(fish):
     """The depth at which this species' thermal envelope is evaluated.
 
-    The midpoint of the water it occupies. For a shoal of sardines in the top
-    hundred metres that is inside the mixed layer, so the answer is SST and
-    nothing has changed. For a bristlemouth at 200-900 m it is 550 m, which
-    in the tropics is about eight degrees and in the Southern Ocean about
-    two -- a far smaller spread than the forty degrees the surface spans, and
-    that narrowing is precisely why the mesopelagic species are cosmopolitan
+    Two regimes, split at the base of the sunlit zone, and the split is about
+    WHERE THE PUBLISHED NUMBER CAME FROM rather than about the fish.
+
+    A species living mostly above 200 m has its temperature range derived
+    from occurrence records matched against SEA SURFACE temperature -- that
+    is what the satellite measures and what the databases join on. So the
+    envelope of an epipelagic fish must be tested against the surface, and
+    testing it at the midpoint of its depth range instead quietly converts a
+    surface tolerance into a thermocline tolerance.
+
+    That is not hypothetical. Chub mackerel is explicitly anti-tropical --
+    "absent from the Indian Ocean except for South Africa" -- and its 27 C
+    ceiling excludes a 29 C tropical surface exactly as it should. Evaluated
+    at the midpoint of its 50-200 m range it was being offered 22 C
+    thermocline water instead, and it turned up in the Moluccas, on the
+    equator, at high suitability.
+
+    Below 200 m the opposite holds: those ranges come from nets and CTD
+    casts at depth, and a bristlemouth's 3.9-16.3 C is the water it is
+    actually in. Its midpoint of 550 m is about 10 C in the tropics and 4 C
+    in the Southern Ocean -- a far narrower spread than the forty degrees the
+    surface spans, and precisely why the mesopelagic species are cosmopolitan
     and the surface ones are not.
 
-    For a migrator the DAY band is used, deliberately. It is where the animal
-    spends the longer half of the day, it is the deeper and more thermally
-    stable half, and using a value that swung twice a day would make presence
-    itself flicker on and off at dusk -- which is a rendering artefact
-    dressed up as biology."""
+    For a migrator the DAY band is used. It is the deeper and more thermally
+    stable half, and a value that swung twice a day would make presence
+    itself flicker on and off at dusk -- a rendering artefact dressed up as
+    biology."""
     lo, hi = fish.dvm_day if fish.dvm_day is not None else fish.z
-    return 0.5 * (lo + hi)
+    mid = 0.5 * (lo + hi)
+    return SURFACE_REF if mid < EPI_Z else mid
 
 
 def suitability(fish, temp, bottom_m, prod, shore_km):
