@@ -900,6 +900,51 @@ that doesn't.
 
 ---
 
+## 8c. Advection — a proposal, not yet built
+
+Your idea, recorded because I think it is the strongest structural change left
+in the project and it subsumes several of the fixes already made.
+
+At present the community at a position is **grown in place**: whatever is there
+divides, gets eaten, and slowly turns over, with a trickle of immigration. That
+is the right model for a moored instrument. It is the wrong model for a ship.
+
+Drake makes 80–180 km on a good day. The water the panel is showing is
+therefore **new water every day or two** — the community is overwhelmingly
+*advected in* from ahead, not descended from what was there yesterday. Which
+means the correct dynamic is a flush: cells enter at the leading edge, leave at
+the trailing one, and the composition of what enters is set by what belongs in
+the water the ship is entering.
+
+What that would buy, beyond being right:
+
+- **The lag disappears.** Composition currently trails the environment by the
+  turnover time of the population, which is why the Humboldt takes a week to
+  become a diatom smear after the ship arrives. With advection it changes as
+  fast as the ocean under it does.
+- **The founder effect goes away structurally** rather than by the immigration
+  and cull machinery in §7d. Whoever fills the cap is flushed out shortly
+  afterwards regardless.
+- **Counts and ratios become directly controllable** at the inflow, which is
+  the honest place to apply the §1 visual compression: you are choosing what
+  arrives, not overruling what grew.
+- **`Track.speed(day)` already exists and is already zero at anchor.** So the
+  flush rate is a function we have: under way the water is replaced, at anchor
+  it is sat in and the community develops in place — which is exactly the
+  distinction the piece already makes on the footer, and it would become a
+  visible difference in behaviour rather than only a caption.
+
+The risk is that it makes the ecosystem a *display* of the climatology rather
+than a model of it — if everything is imported, nothing is grown, and the NPZ
+dynamics stop mattering. The balance point is that inflow composition should be
+seeded from the environment but the **local dynamics still decide who thrives**,
+so a bloom is still something that happens rather than something delivered.
+
+Probably Stage 7, after the tuning pass has said what the current mechanism
+actually gets wrong.
+
+---
+
 ## 9. Stages
 
 Each stage ends in something that runs. Nothing is ordered until Stage 3.
