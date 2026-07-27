@@ -1307,6 +1307,31 @@ frame in degrees, mean speed in px/s, agent count, day, position, and whether
 the ship is at sea. These are the §10h numbers computed as you drag. The eye
 decides; the number is what gets written down and defended.
 
+**True physical size.** `t`, or the 1:1 button. The panel is drawn at the
+size it will actually be, which for any monitor less dense than the panel
+means scaling *down* from 1:1, not up -- a 27in 1440p screen is 108.8 ppi
+against a 2.7in 240x400 panel's 172.8, so the factor is 0.6297 and the render
+is resampled rather than replicated. A soft resample is not a betrayal of the
+1-bit look: below 1:1 the monitor cannot show every panel pixel, and the eye
+at arm's length from the real panel is doing the same averaging.
+
+The mode carries **a ruler**, because the ppi you compute from a monitor's
+advertised size and resolution is right only if the desktop is at 100% scaling
+and the OS is reporting real pixels, and neither is safe to assume. Hold a
+ruler to the 100 mm bar, adjust the ppi slider until it agrees, and the panel
+beside it is the size the object will be. The console prints the resulting
+`SCALE` to paste into `drift.py`, which now accepts a fractional value and
+switches to a smooth resample when it gets one. On Windows the console asks
+for DPI awareness first, or a machine set to 125% scaling would be out by
+exactly that.
+
+For reference, at 108.8 ppi:
+
+| panel | physical | on this monitor | SCALE |
+|---|---|---|---|
+| 240x400 at 2.7in | 35 x 59 mm | 151 x 252 px | 0.6297 |
+| 300x400 at 4.2in | 64 x 85 mm | 274 x 366 px | 0.9138 |
+
 **Export.** `e` writes a paste-ready block to `docs/tuned_values.txt` — the
 scalars as scalars, and the gait multipliers already folded into the
 per-species dictionaries under the identifiers `drift.py` uses.

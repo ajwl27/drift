@@ -54,7 +54,14 @@ import sys
 # --------------------------------------------------------------------------
 
 W, H = 240, 400            # panel resolution, portrait. Sharp 2.7" rotated.
-SCALE = 2                  # preview upscale only
+PANEL_DIAG_IN = 2.7        # the physical panel, for true-size preview only.
+                           # A 4.2in 300x400 RLCD would be (300, 400, 4.2),
+                           # and note the pleasing accident: the globe limb
+                           # radius sqrt(150^2+200^2) is then exactly 250.
+SCALE = 2                  # preview upscale. May be fractional -- see
+                           # tools/console.py, which computes the value that
+                           # puts the panel on a monitor at its true physical
+                           # size and will hand it back to paste in here.
 TARGET_FPS = 20            # preview frame rate. Both this and SWIM_SCALE are
                            # judgements about how a moving thing looks, so
                            # they are set with tools/tune.py rather than by
@@ -2740,7 +2747,13 @@ def preview():
     import numpy as np
     LUT = np.array([[228, 228, 224], [22, 22, 24]], dtype=np.uint8)
     pygame.init()
-    screen = pygame.display.set_mode((W * SCALE, H * SCALE))
+    # SCALE may be fractional -- notably when it is set to show the panel at
+    # its true physical size, where the monitor is usually LESS dense than
+    # the panel and the factor comes out below 1. Nearest-neighbour is right
+    # for integer upscaling and wrong for anything else, so pick per case.
+    pw, ph = int(round(W * SCALE)), int(round(H * SCALE))
+    smooth = abs(SCALE - round(SCALE)) > 1e-6 or SCALE < 1.0
+    screen = pygame.display.set_mode((pw, ph))
     pygame.display.set_caption("Drift")
     clock = pygame.time.Clock()
 
@@ -2850,7 +2863,13 @@ def preview():
         # costs ~96k operations a frame and stutters badly
         arr = np.frombuffer(bytes(canvas.buf), dtype=np.uint8).reshape(H, W)
         pygame.surfarray.blit_array(surf, np.transpose(LUT[arr], (1, 0, 2)))
-        pygame.transform.scale(surf, (W * SCALE, H * SCALE), screen)
+        if smooth:
+            # a soft resample is not a betrayal of the 1-bit aesthetic here:
+            # below 1:1 the monitor cannot show every panel pixel, and the eye
+            # at arm's length from the real panel is doing the same averaging
+            screen.blit(pygame.transform.smoothscale(surf, (pw, ph)), (0, 0))
+        else:
+            pygame.transform.scale(surf, (pw, ph), screen)
         pygame.display.flip()
 
     pygame.quit()

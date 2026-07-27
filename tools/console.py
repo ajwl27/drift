@@ -39,6 +39,7 @@ KEYS
     backspace       reset the selected parameter to its default
     1 2 3           water / map / key plate
     z               cycle the map through globe, dolly, chart
+    t               true physical size, with a ruler to calibrate it
     c               plate chrome on/off        space   pause
     r               next seed                  shift+R reset every parameter
     tab             snapshot into A and split the view; tab again to close
@@ -62,7 +63,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import drift                                                   # noqa: E402
-from drift import Canvas, W, H, Ecosystem, View                # noqa: E402
+from drift import (Canvas, W, H, Ecosystem, View,               # noqa: E402
+                   PANEL_DIAG_IN)
 from mapview import (Coast, R_GLOBE, R_CHART, zoom_radius,     # noqa: E402
                      render_map)
 from screens import draw_screen, WATER, MAP, KEY, GALLERY      # noqa: E402
@@ -72,7 +74,13 @@ from ocean import Ocean                                        # noqa: E402
 
 SC = 2                       # panel upscale
 PAD = 10
-COL = 430                    # width of the control column
+COL = 450                    # width of the control column, set so a
+                             # 100 mm calibration ruler fits at a
+                             # typical desktop monitor density
+COLH = 1000                  # the control column's own height: sliders,
+                             # ruler, legend and footer. In true-size mode
+                             # the panel is SMALLER than this, so the window
+                             # is sized by the controls and not by the art.
 FOOT = 74                    # readout strip under the panel
 
 INK = (28, 30, 34)
@@ -170,8 +178,15 @@ PARAMS = [
     # single drag across the voyage would queue fifty spin-ups.
     Param("day", "voyage day", 0.0, 1018.0, 420.0, fmt="%.0f", group="SCENE"),
     Param("seed", "seed", 0.0, 40.0, 5.0, fmt="%.0f", group="SCENE"),
+    # Not a model parameter either: how dense YOUR monitor is, which is the
+    # only thing standing between the panel on screen and the panel in your
+    # hand. Arithmetic gives a starting value; the ruler below gives the
+    # right one, because desktop scaling settings quietly change it.
+    Param("ppi", "monitor ppi", 60.0, 260.0, 108.79, fmt="%.1f",
+          group="DISPLAY"),
 ]
 DEFERRED = ("day", "seed")
+PANEL_PPI = math.hypot(W, H) / PANEL_DIAG_IN
 PMAP = {p.key: p for p in PARAMS}
 
 # the published per-species gait values, kept so the multipliers above have
@@ -301,6 +316,15 @@ def run(seed=5, day=420.0):
     import numpy as np
     import pygame
 
+    # Windows scales the desktop and then lies about the resolution unless
+    # you opt out, which would put a "true size" mode out by 25% on a machine
+    # set to 125%. Harmless everywhere else.
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
     pygame.init()
     pygame.key.set_repeat(280, 28)
     font = pygame.font.SysFont("monospace", 13)
@@ -313,10 +337,30 @@ def run(seed=5, day=420.0):
     ocean = Ocean("data/ocean.bin")
     coast = Coast("data/coast.bin")
     view = View(plate=False, hud=True)
+    true_size = False
+    live = None                 # set below; panel_px() only reads it once
+                                # true_size is on, which cannot be before then
+
+    def panel_px():
+        """Blit size in monitor pixels. In true-size mode this is whatever
+        makes the panel physically 4.2 inches (or 2.7, or whatever
+        PANEL_DIAG_IN says) on the glass in front of you -- which, for any
+        monitor less dense than the panel, means DOWN from 1:1 rather than
+        up. A 27in 1440p screen is 109 ppi against the panel's 119, so the
+        factor is 0.91 and the render has to be resampled rather than
+        replicated."""
+        if not true_size:
+            return W * SC, H * SC, float(SC)
+        f = live.st["ppi"] / PANEL_PPI
+        return max(40, int(round(W * f))), max(60, int(round(H * f))), f
 
     def size(split):
-        w = (2 if split else 1) * (W * SC + PAD) + PAD + COL
-        return w, H * SC + FOOT + PAD * 2
+        pw, ph, _ = panel_px()
+        w = (2 if split else 1) * (pw + PAD) + PAD + COL + PAD
+        return w, max(ph + FOOT + PAD * 2, COLH)
+
+    def win_h():
+        return size(split)[1]
 
     screen = pygame.display.set_mode(size(False))
     pygame.display.set_caption("drift / console")
@@ -370,7 +414,7 @@ def run(seed=5, day=420.0):
 
     # ---- layout -------------------------------------------------------
     def col_x():
-        return (2 if split else 1) * (W * SC + PAD) + PAD
+        return (2 if split else 1) * (panel_px()[0] + PAD) + PAD
 
     def rows():
         """(param, y) for each row, plus the group headers."""
@@ -396,7 +440,9 @@ def run(seed=5, day=420.0):
         y2 = PAD + 28
         top += [("plate", (x0, y2, 56, 22), view.plate),
                 ("hud", (x0 + 62, y2, 48, 22), view.hud)]
-        yb = H * SC + FOOT + PAD - 22
+        if scr != MAP:
+            top.append(("1:1 size", (x0 + 116, y2, 70, 22), true_size))
+        yb = win_h() - PAD - 24
         bot = [("reset", (x0, yb, 66, 24), False),
                ("reseed", (x0 + 72, yb, 74, 24), False),
                ("export", (x0 + 152, yb, 70, 24), False),
@@ -420,22 +466,35 @@ def run(seed=5, day=420.0):
                         box[1] + (box[3] - t.get_height()) // 2))
 
     def draw_panel(side, x):
+        pw, ph, f = panel_px()
         arr = np.frombuffer(bytes(side.canvas.buf),
                             dtype=np.uint8).reshape(H, W)
         pygame.surfarray.blit_array(surf, np.transpose(LUT[arr], (1, 0, 2)))
-        pygame.transform.scale(surf, (W * SC, H * SC),
-                               screen.subsurface((x, PAD, W * SC, H * SC)))
-        pygame.draw.rect(screen, FAINT, (x, PAD, W * SC, H * SC), 1)
-        y = PAD + H * SC + 6
+        if abs(f - round(f)) < 1e-6 and f >= 1.0:
+            pygame.transform.scale(surf, (pw, ph),
+                                   screen.subsurface((x, PAD, pw, ph)))
+        else:
+            # a soft resample is not a betrayal of the 1-bit look: below 1:1
+            # the monitor cannot show every panel pixel, and your eye at
+            # arm's length from the real panel is doing the same averaging
+            screen.blit(pygame.transform.smoothscale(surf, (pw, ph)),
+                        (x, PAD))
+        pygame.draw.rect(screen, FAINT, (x, PAD, pw, ph), 1)
+        y = PAD + ph + 6
         screen.blit(font.render(side.label, True, INK), (x, y))
         readout = ("%.1f'/frame   %.1f px/s   %d agents"
                    % (side.spin, side.speed, len(side.eco.agents)))
+
         screen.blit(small.render(readout, True, DIM), (x, y + 20))
         lat, lon = track.position(side.eco.t)
         sub = ("day %.1f   %.1f%s %.1f%s   %s"
                % (side.eco.t, abs(lat), "NS"[lat < 0], abs(lon),
                   "EW"[lon < 0], track.status(side.eco.t)))
         screen.blit(small.render(sub, True, DIM), (x, y + 36))
+        if true_size:
+            mm = 25.4 / max(live.st["ppi"], 1.0)
+            screen.blit(small.render("%.0f x %.0f mm" % (pw * mm, ph * mm),
+                                     True, HOT), (x, y + 52))
 
     def toggle_split():
         """Snapshot the live side into A and widen the window, or fold back.
@@ -505,6 +564,9 @@ def run(seed=5, day=420.0):
                         view.plate = not view.plate
                     elif label == "hud":
                         view.hud = not view.hud
+                    elif label == "1:1 size":
+                        true_size = not true_size
+                        screen = pygame.display.set_mode(size(split))
                     elif label in ("globe", "dolly", "chart"):
                         zoom = ("globe", "dolly", "chart").index(label)
                     elif label == "pause":
@@ -563,6 +625,9 @@ def run(seed=5, day=420.0):
                     view.plate = not view.plate
                 elif ev.key == pygame.K_h:
                     view.hud = not view.hud
+                elif ev.key == pygame.K_t:
+                    true_size = not true_size
+                    screen = pygame.display.set_mode(size(split))
                 elif ev.key == pygame.K_e:
                     status = export()
                 elif ev.key == pygame.K_r and (mods & pygame.KMOD_SHIFT):
@@ -620,7 +685,8 @@ def run(seed=5, day=420.0):
             draw_panel(side, PAD + i * (W * SC + PAD))
         x0 = col_x()
         pygame.draw.rect(screen, CARD, (x0 - 4, PAD - 4, COL - PAD + 8,
-                                        H * SC + FOOT + 8), border_radius=6)
+                                        win_h() - 2 * PAD + 8),
+                         border_radius=6)
         top, bot, _ = buttons()
         for label, box, on in top + bot:
             draw_button(label, box, on)
@@ -654,22 +720,54 @@ def run(seed=5, day=420.0):
                                (kx, y + 22), 5 if on else 4)
             idx += 1
 
+        ly = rows()[-1][1] + 46
+        if true_size:
+            # CALIBRATE BY MEASURING, NOT BY ARITHMETIC. The ppi computed
+            # from a monitor's advertised size and resolution is right only
+            # if the desktop is at 100% scaling and the OS is reporting real
+            # pixels, and neither is safe to assume. Hold a ruler to this bar
+            # and adjust the ppi slider until it reads 100 mm; then the panel
+            # beside it is the size the object will actually be.
+            # pick the longest round length that still fits the column, so
+            # the ruler stays usable at any monitor density
+            avail = COL - 12
+            mm = 10
+            for cand in (100, 80, 50, 40, 25, 20, 10):
+                if live.st["ppi"] / 25.4 * cand <= avail:
+                    mm = cand
+                    break
+            bar = int(round(live.st["ppi"] / 25.4 * mm))
+            pygame.draw.line(screen, INK, (x0, ly + 10), (x0 + bar, ly + 10), 2)
+            for t in range(11):
+                tx = x0 + int(bar * t / 10.0)
+                hgt = 8 if t % 5 == 0 else 4
+                pygame.draw.line(screen, INK, (tx, ly + 10 - hgt),
+                                 (tx, ly + 10), 2 if t % 5 == 0 else 1)
+            screen.blit(small.render("%d mm -- hold a ruler here, adjust ppi"
+                                     % mm, True, DIM), (x0, ly + 14))
+            screen.blit(small.render("panel %.1f ppi / monitor %.1f"
+                                     % (PANEL_PPI, live.st["ppi"]), True, DIM),
+                        (x0, ly + 29))
+            screen.blit(small.render("SCALE = %.4f  (paste into drift.py)"
+                                     % panel_px()[2], True, HOT),
+                        (x0, ly + 44))
+            ly += 66
+
         # the keys, in the space the sliders do not use. A development build
         # that needs its own README has failed at the first hurdle.
-        ly = rows()[-1][1] + 52
         for line in ("up/down  select        left/right  adjust",
                      "shift    fine          ctrl        coarse",
                      "backspace  reset this one",
                      "",
                      "1 2 3    water / map / key      z  map zoom",
-                     "c  plate    h  hud    space  pause    r  seed",
+                     "c  plate  h  hud  t  true size  space  pause  r  seed",
                      "tab      A/B split against a saved copy",
                      "e        export to docs/tuned_values.txt",
                      "shift+R  reset every parameter"):
             screen.blit(small.render(line, True, DIM), (x0, ly))
             ly += 15
 
-        yb = H * SC + FOOT + PAD - 46
+        yb = win_h() - PAD - 48
         screen.blit(small.render(status, True, DIM), (x0, yb))
         hint = ("wheel over the panel = speed, over the controls = voyage day"
                 "   |   tab = A/B")
