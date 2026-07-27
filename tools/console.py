@@ -204,15 +204,17 @@ PARAMS = [
     # the water is a scene watched at a distance, the plate is one specimen
     # held still with a visitor's whole attention on it while they read its
     # name, and those want different amounts of movement.
-    Param("krate", "plate: rate", 0.05, 2.0, keyplate.KEY_RATE, log=True,
+    Param("krate", "plate: rate", 0.05, 4.0, keyplate.KEY_RATE, log=True,
           fmt="%.2f", unit="x", group="KEY PLATE"),
     Param("kyaw", "plate: yaw", 0.0, 2.0, keyplate.KEY_YAW, fmt="%.2f",
           unit="x", group="KEY PLATE"),
-    Param("ksurge", "plate: sway", 0.0, 2.0, keyplate.KEY_SURGE, fmt="%.2f",
+    Param("ksurge", "plate: sway", 0.0, 4.0, keyplate.KEY_SURGE, fmt="%.2f",
           unit="x", group="KEY PLATE"),
     Param("kbeat", "plate: beat", 0.05, 3.0, keyplate.KEY_BEAT, log=True,
           fmt="%.2f", unit="x", group="KEY PLATE"),
-    Param("kspin", "plate: spin", 30.0, 1800.0, keyplate.KEY_SPIN_S, log=True,
+    # the base period of the roll, not a full turn: the roll reverses, so
+    # "seconds per revolution" stopped meaning anything
+    Param("kspin", "plate: roll", 5.0, 300.0, keyplate.KEY_SPIN_S, log=True,
           fmt="%.0f", unit=" s", group="KEY PLATE"),
 ]
 DEFERRED = ("day", "seed")

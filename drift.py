@@ -60,10 +60,13 @@ W, H = 300, 400            # panel resolution, portrait. The 4.2in RLCD on
                            # globe limb radius sqrt(150^2+200^2) is now
                            # exactly 250, where 240 x 400 gave 233.238.
 PANEL_DIAG_IN = 4.2        # the physical panel, for true-size preview only
-SCALE = 2                  # preview upscale. May be fractional -- see
-                           # tools/console.py, which computes the value that
-                           # puts the panel on a monitor at its true physical
-                           # size and will hand it back to paste in here.
+SCALE = 0.9138             # preview upscale, and this value is TRUE PHYSICAL
+                           # SIZE on a 27in 1440p monitor (108.79 ppi) for a
+                           # 4.2in 300x400 panel at 119.05 ppi. Fractional, so
+                           # the preview resamples rather than replicating --
+                           # see the note in preview(). tools/console.py has a
+                           # ruler that computes this for any monitor; set it
+                           # to 2 for a big blocky view instead.
 TARGET_FPS = 20            # preview frame rate. Both this and SWIM_SCALE are
                            # judgements about how a moving thing looks, so
                            # they are set with tools/tune.py rather than by
@@ -913,8 +916,9 @@ SWIM_BL = {
     FLAGELLATE: 14.0, TINTINNID: 8.0, KRILL: 3.0, CERATIUM: 2.0,
     ORNITHO: 1.6, COPEPOD: 1.1, SALP: 0.6,
 }
-SWIM_SCALE = 0.22          # global damper, set by eye: the fastest thing
-                           # crosses the panel in about ten seconds
+SWIM_SCALE = 0.09          # global damper, set by eye with tools/console.py.
+                           # It is the fraction of true speed the panel shows,
+                           # so this is eleven-fold slow motion (see 10g).
 
 # Swimming runs at REAL time, not simulated time.
 #
@@ -933,7 +937,7 @@ TURN_TAU = {               # seconds before a heading decorrelates. Ciliates
     COPEPOD: 9.0, KRILL: 40.0, SALP: 25.0,
 }                          # spiral tightly; a salp holds a course, and krill
                            # school, which is the straightest thing out there.
-TUMBLE_S = 90.0            # seconds for a non-swimmer to turn once in shear
+TUMBLE_S = 150.0           # seconds for a non-swimmer to turn once in shear
 
 # SWIM_SCALE IS A SLOW-MOTION FACTOR, AND IT HAS TO APPLY TO THE CLOCK.
 #
@@ -977,13 +981,16 @@ HELIX_YAW = {FLAGELLATE: 0.40, TINTINNID: 0.34, CERATIUM: 0.24, ORNITHO: 0.20}
 # drag. A copepod's coast is short because at its Reynolds number the water is
 # treacle; a salp is bigger, faster and glides.
 HOP_HZ = {COPEPOD: 2.0, SALP: 1.0}
-COAST_S = {COPEPOD: 0.10, SALP: 0.50}
+# Coasts, shortened to 0.40 of the published figures by eye. A longer coast
+# reads as gliding and a shorter one as a flick, and the flick is what a
+# copepod actually looks like at this size.
+COAST_S = {COPEPOD: 0.040, SALP: 0.200}
 # Seconds for the body axis to swing round to a new intended heading. A cell
 # steers, it does not teleport, and this is also what stops the heading noise
 # from reaching the drawing: it is a first-order low-pass, so the body follows
 # the part of the wander that is real turning and ignores the part that is the
 # model's own white noise. In PANEL time -- it is a drawing rate, not biology.
-BODY_TAU = 0.30
+BODY_TAU = 0.50
 # A multiplier on every TURN_TAU, and the one lever for "how much do they
 # wander". Left at 1.0 the paths are the real animals' paths; the scaling
 # above already fixed the crumpling, and this exists because how much

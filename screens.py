@@ -63,10 +63,16 @@ class Cadence:
 #
 # Ninety seconds is 4% of the GALLERY cycle. The water is still up for
 # eighteen minutes at a stretch, which is the ratio that matters.
-GALLERY = Cadence(water=18 * 60, globe=3.0, dolly=7.0, chart=8.0,
-                  key=90.0, fade=1.5)
-EXHIBIT = Cadence(water=20.0, globe=2.0, dolly=5.0, chart=5.0,
-                  key=52.0, fade=1.0)
+# Set by eye in tools/console.py rather than reasoned to. The move is much
+# slower than the first guess: a minute to dolly in and a minute back out,
+# with half-minute rests at each end, which makes the interlude three minutes
+# long. That sounds extravagant until you notice it is 7% of a cycle whose
+# water segments are eighteen minutes each -- and that a camera move you can
+# watch without noticing it is a camera move has to be about this slow.
+GALLERY = Cadence(water=18 * 60, globe=30.0, dolly=60.0, chart=30.0,
+                  key=180.0, fade=1.5)
+EXHIBIT = Cadence(water=45.0, globe=6.0, dolly=14.0, chart=8.0,
+                  key=70.0, fade=1.0)
 
 EXHIBIT_LAPSE = 300.0          # seconds before EXHIBIT falls back to GALLERY
 

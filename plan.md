@@ -1029,6 +1029,96 @@ Ranked by probability × damage.
 
 ---
 
+## 10n. The defaults, chosen by eye, and what they cost
+
+Everything below was set with `tools/console.py` and pasted back. That is what
+the console is for, and it is worth recording that the values it produced are
+mostly a long way from the ones that were reasoned to.
+
+| | was | now | |
+|---|---|---|---|
+| `SWIM_SCALE` | 0.22 | **0.09** | eleven-fold slow motion, not four |
+| `BODY_TAU` | 0.30 s | **0.50 s** | |
+| `COAST_S` | 0.10 / 0.50 | **x0.40** | a flick rather than a glide |
+| `TUMBLE_S` | 90 s | **150 s** | |
+| key dwell | 90 s | **180 s** | |
+| map globe / zoom / chart | 3 / 7 / 8 s | **30 / 60 / 30 s** | |
+| `KEY_RATE` | 0.55 | **1.00** | |
+| `KEY_SURGE` | 0.45 | **1.50** | |
+| `KEY_SPIN_S` | 420 s | **40 s** | and it means something else now |
+
+The map interlude is now **three minutes**: half a minute on the globe, a
+minute in, half a minute at chart scale, a minute back out. That sounds
+extravagant until you notice it is 7% of a cycle whose water segments are
+eighteen minutes each -- and that a camera move you can watch without noticing
+it is a camera move has to be about this slow.
+
+The standalone `drift.py` picks all of this up, because the console only ever
+wrote to the same module constants the shipping file reads. `SCALE` is set to
+**0.9138**, which is true physical size for a 4.2in panel on a 27in 1440p
+monitor; the preview resamples rather than replicating, and `tools/console.py`
+has the ruler that computes it for any other screen.
+
+### Sway, applied to everything
+
+The sway turned out to be the thing that makes a specimen read as *suspended
+in water* rather than pinned to a card, so it went up and it went everywhere.
+Per gait, as a multiple of `KEY_SURGE`:
+
+| | | |
+|---|---|---|
+| hop | 1.00 | *Calanus* is the only thing on the plate visibly under its own power, so it moves furthest |
+| helix | 0.55 | surges with its corkscrew |
+| cruise | 0.30 | holds station |
+| drift | 0.22 | a diatom has no say in anything and still rides the water |
+
+That last row is the point. The difference between a copepod and a diatom is
+now stated by how they move rather than by a word, and the diatom is *not*
+inert -- it is in water, and water moves.
+
+### A roll that changes its mind
+
+Three requirements, all from watching it: it has to reverse, it has to differ
+between species, and it has to apply to swimmers too. A constant rotation is a
+turntable in a shop window -- it never arrives anywhere and you stop believing
+it after ten seconds.
+
+Two sinusoids whose periods do not divide into each other. The sum never
+repeats over any span anyone will watch, it reverses of its own accord at
+intervals that are not the same twice, and it is completely deterministic --
+no seed, no state, nothing to drift out of step when the plate scrolls a row
+off the screen and back on. The per-species factor comes from the kind
+constant itself, so every organism has its own rhythm and none of them had to
+be typed in.
+
+### The second line, rewritten
+
+`GRAZER  SWARMS` read oddly for a reason worth naming: a trophic role and a
+verb, in telegraphese, compressed into two words because the old column had
+nineteen characters and no grammar would fit. And "grazer" was the wrong fact
+anyway -- the name above it is already the organism, and what a visitor
+genuinely cannot get from the drawing is **how big it is**. Everything on this
+plate is drawn at a comparable size on purpose, which is what makes the
+morphologies comparable and is also, unavoidably, a lie about scale. The
+caption is where that lie gets corrected.
+
+Three lines now, and the row is 82 px rather than 66:
+
+    CALANUS
+    2-5 MM COPEPOD
+    ROWS WITH ANTENNAE
+
+Sizes are hand-written **length** ranges, not the model's equivalent spherical
+diameters: ESD is a modelling convenience and a visitor holding a ruler to a
+krill is measuring its length. Group words are all twelve characters or fewer
+so they fit at reading size -- DINOPHYTE rather than DINOFLAGELLATE,
+FORAMINIFER rather than FORAMINIFERAN, both correct, and a word that has to be
+shrunk to fit is a word nobody reads. And each fact names something **you can
+see in the drawing beside it**, because a caption pointing at a feature you
+cannot find is worse than no caption at all.
+
+---
+
 ## 10m. Names on the chart, and the camera move you can actually watch
 
 ### The chart says where you are now

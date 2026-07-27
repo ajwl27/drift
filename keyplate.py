@@ -47,44 +47,79 @@ NAMES = {
     KRILL: "EUPHAUSIA",
 }
 
-# Second line under each name: what it does for a living. Three words, so a
-# visitor gets the ecology without being lectured.
-# Nineteen characters is the hard limit: that is what W - 10 - TEXT_X buys
-# at T_MED, and a role that has to shrink to fit is a role nobody reads. The
-# double spaces went for the same reason -- they cost two characters and
-# bought a typographic nicety that does not survive being 3 mm tall.
-ROLES = {
-    RADIOLARIAN: "MIXOTROPH DRIFTS",
-    CENTRIC: "DIATOM SINKS",
-    PENNATE: "DIATOM GLIDES",
-    CHAIN: "DIATOM CHAINS",
-    CERATIUM: "MIXOTROPH SWIMS",
-    COPEPOD: "GRAZER MIGRATES",
-    TINTINNID: "GRAZER FILTERS",
-    COCCO: "PLATED DRIFTS",
-    FLAGELLATE: "NANOPLANKTON SWIMS",
-    THALASSIO: "DIATOM BEADS",
-    RHIZO: "DIATOM NEEDLES",
-    CORETHRON: "DIATOM POLAR",
-    ACANTHARIA: "MIXOTROPH RADIATES",
-    FORAM: "MIXOTROPH CHAMBERED",
-    ORNITHO: "MIXOTROPH SAILS",
-    TRICHO: "FIXES NITROGEN",
-    SALP: "GRAZER FILTERS",
-    KRILL: "GRAZER SWARMS",
+# Under each name, two lines: what it is and how big, then one thing about it
+# worth knowing.
+#
+# The first version said "GRAZER  SWARMS" -- a trophic role and a verb, in
+# telegraphese, and it read oddly for a reason worth naming. It was written
+# for a plate where the second line had nineteen characters and had to earn
+# every one, so it compressed two facts into two words and lost the grammar
+# that made either of them a statement. And "grazer" was the wrong fact
+# anyway: the name above it is already the organism, and what a visitor
+# actually cannot get from the drawing is HOW BIG IT IS. Everything on this
+# plate is drawn at the same size on purpose, which is what makes the
+# morphology comparable and is also, unavoidably, a lie about scale. The
+# caption is where that lie gets corrected.
+#
+# So: size and group, then a fact. Sizes are hand-written LENGTH ranges
+# rather than the model's equivalent spherical diameters, because ESD is a
+# modelling convenience and a viewer holding a ruler to a krill is measuring
+# its length.
+SIZES = {
+    FLAGELLATE: "1-3 UM", COCCO: "5-10 UM", THALASSIO: "10-30 UM",
+    CHAIN: "10-50 UM", PENNATE: "20-60 UM", CORETHRON: "50-100 UM",
+    ORNITHO: "50-120 UM", TINTINNID: "50-200 UM", CENTRIC: "50-500 UM",
+    CERATIUM: "0.1-0.5 MM", RHIZO: "0.2-1 MM", RADIOLARIAN: "0.1-2 MM",
+    ACANTHARIA: "0.1-1 MM", FORAM: "0.3-1 MM", TRICHO: "1-3 MM",
+    COPEPOD: "2-5 MM", KRILL: "1-6 CM", SALP: "1-10 CM",
 }
 
-# Laid out for type you can read from a sofa rather than type that fits.
-# At T_BIG a name is 21 px tall and at T_MED a role is 14, so a row is 66
-# where it used to be 34 -- five rows on the panel instead of eleven, which
-# is why the plate now moves.
-ROW_H = 66
-SPEC_X = 28          # centre of the specimen column
-TEXT_X = 56          # set by the longest name: COSCINODISCUS is thirteen
-                     # characters, which at T_BIG is 234 px, which is exactly
-                     # what W - 10 - 56 leaves. The column is the type, not
-                     # the other way round.
-SPEC_HALF = 26       # nothing in the specimen column may reach further than
+# Group words, all twelve characters or fewer so that "size GROUP" fits the
+# column at reading size. DINOPHYTE rather than DINOFLAGELLATE and
+# FORAMINIFER rather than FORAMINIFERAN for exactly that reason; both are
+# correct, and a word that has to be shrunk to fit is a word nobody reads.
+GROUPS = {
+    RADIOLARIAN: "RADIOLARIAN", CENTRIC: "DIATOM", PENNATE: "DIATOM",
+    CHAIN: "DIATOM", CERATIUM: "DINOPHYTE", COPEPOD: "COPEPOD",
+    TINTINNID: "CILIATE", COCCO: "HAPTOPHYTE", FLAGELLATE: "PICOPLANKTON",
+    THALASSIO: "DIATOM", RHIZO: "DIATOM", CORETHRON: "DIATOM",
+    ACANTHARIA: "ACANTHARIAN", FORAM: "FORAMINIFER", ORNITHO: "DINOPHYTE",
+    TRICHO: "CYANOPHYTE", SALP: "TUNICATE", KRILL: "KRILL",
+}
+
+# One thing each. Chosen to be the thing you can SEE in the drawing beside
+# it, so the line and the picture explain each other -- a caption that names
+# a feature you cannot find is worse than no caption.
+FACTS = {
+    RADIOLARIAN: "SPINES OF OPAL",
+    CENTRIC: "A PILLBOX OF GLASS",
+    PENNATE: "GLIDES ON MUCUS",
+    CHAIN: "LINKED BY BRISTLES",
+    CERATIUM: "THREE LONG HORNS",
+    COPEPOD: "ROWS WITH ANTENNAE",
+    TINTINNID: "LIVES IN A VASE",
+    COCCO: "ARMOURED IN CHALK",
+    FLAGELLATE: "AMONG THE SMALLEST",
+    THALASSIO: "BEADS ON A THREAD",
+    RHIZO: "A NEEDLE OF GLASS",
+    CORETHRON: "A CROWN OF SPINES",
+    ACANTHARIA: "TEN CRYSTAL RODS",
+    FORAM: "CHAMBERED IN CHALK",
+    ORNITHO: "CARRIES A SAIL",
+    TRICHO: "FIXES NITROGEN GAS",
+    SALP: "A BARREL THAT JETS",
+    KRILL: "SWARMS IN MILLIONS",
+}
+
+ROW_H = 82           # name, size and group, fact, bar
+SPEC_X = 26          # centre of the specimen column
+TEXT_X = 52          # set by the longest lines: COSCINODISCUS is thirteen
+                     # characters at T_BIG and 0.1-2 MM RADIOLARIAN is twenty
+                     # at T_MED, and W - 10 - 52 = 238 holds both with nothing
+                     # to spare. The column is set by the type, not the other
+                     # way round, and every pixel not needed by the type goes
+                     # to the specimen.
+SPEC_HALF = 24       # nothing in the specimen column may reach further than
                      # this from its centre, or it climbs into the name
 NUM_W = 44           # right-hand column, four characters of abundance
 
@@ -152,15 +187,24 @@ BASE_ANG = -0.35           # the angle every specimen was drawn at before
 # water does, and all of them below 1. Tunable in tools/console.py under
 # KEY PLATE, because "how much movement is too much on a thing being read"
 # is a judgement by eye like every other number in this file's neighbourhood.
-KEY_RATE = 0.55            # everything on the plate runs at this fraction of
+KEY_RATE = 1.00            # everything on the plate runs at this fraction of
                            # the water's already-slowed rate
 KEY_YAW = 0.45             # helix yaw amplitude, against the water's
-KEY_SURGE = 0.45           # fore-and-aft sway
-KEY_SPIN_S = 420.0         # seconds for a non-swimmer to turn once. The water
-                           # uses TUMBLE_S = 90, which on the plate had a
-                           # radiolarian visibly rotating while you read two
-                           # words next to it. Seven minutes is a drift.
+KEY_SURGE = 1.50           # fore-and-aft sway. Above 1 on purpose: the sway
+                           # is what makes a specimen read as suspended in
+                           # water rather than pinned to a card, and it is
+                           # the cheapest thing on the plate that does.
+KEY_SPIN_S = 40.0          # the base period of the slow roll, in seconds
 KEY_BEAT = 0.60            # appendage beat rate
+
+# Sway, per gait, as a multiple of KEY_SURGE. A copepod is *swimming* -- it
+# rows, it lurches, it is the only thing on the plate under its own power in
+# any visible way -- so it moves furthest. A helical swimmer surges with its
+# corkscrew. A cruiser holds station. And a diatom, which has no say in
+# anything, still rides the water: gently, and that gentleness is the point,
+# because it is what tells you the difference between the two without a word
+# being written.
+SWAY = {"hop": 1.00, "helix": 0.55, "cruise": 0.30, "drift": 0.22}
 
 # Beats per second, in ANIMAL time, for the parts that move independently of
 # the whole animal. Krill row their pleopods several times a second whatever
@@ -190,32 +234,59 @@ def specimen_pose(kind, t):
     the translation is a gentle sway and the WORK is done by the appendages
     -- which is also what you would actually see, since a tethered copepod
     rows its antennae and stays put."""
+def _roll(kind, t):
+    """The slow roll every specimen has, swimmer or not.
+
+    Three requirements, all from watching it: it has to change direction, it
+    has to differ between species, and it has to apply to everything. A
+    constant rotation is a turntable in a shop window -- it never arrives
+    anywhere and you stop believing it after ten seconds.
+
+    Two sinusoids whose periods do not divide into each other. The sum never
+    repeats over any span anyone will watch, it reverses of its own accord at
+    intervals that are not the same twice, and it is still completely
+    deterministic -- no seed, no state, nothing to drift out of step when the
+    plate scrolls a row off the screen and back on. The per-species factor
+    comes from the kind constant itself, so every organism has its own rhythm
+    and none of them had to be typed in."""
+    p = KEY_SPIN_S * (0.70 + 0.11 * (kind % 7))
+    return (0.55 * math.sin(2.0 * math.pi * t / p)
+            + 0.30 * math.sin(2.0 * math.pi * t / (p * 1.618) + 1.1))
+
+
+def specimen_pose(kind, t):
     slow = SWIM_SCALE * KEY_RATE
     ta = t * slow                                  # animal seconds
     gait = GAIT.get(kind)
     beat = BEAT_HZ.get(kind)
     ph = 2.0 * math.pi * beat * ta * KEY_BEAT if beat is not None else 0.0
+    roll = _roll(kind, t)
     if gait == HELIX:
         f = HELIX_HZ[kind]
         yaw = HELIX_YAW[kind] * KEY_YAW
         hp = 2.0 * math.pi * f * ta
-        # the corkscrew, seen edge-on: a yaw oscillation, and a gentle surge
-        # a quarter cycle out of phase so it reads as swimming rather than
-        # as a windscreen wiper
-        return (BASE_ANG + yaw * math.sin(hp),
-                0.32 * KEY_SURGE * math.cos(hp), hp)
+        # the corkscrew, seen edge-on: a yaw oscillation, and a surge a
+        # quarter cycle out of phase so it reads as swimming rather than as
+        # a windscreen wiper
+        return (BASE_ANG + roll + yaw * math.sin(hp),
+                0.32 * KEY_SURGE * SWAY["helix"] * math.cos(hp), hp)
     if gait == HOP:
         hp = 2.0 * math.pi * HOP_HZ[kind] * ta
         # one antennal stroke per hop, and a sway a quarter cycle behind it,
         # because the body follows the limbs rather than leading them
-        return BASE_ANG, 0.16 * KEY_SURGE * math.sin(hp - 1.4), hp
+        return (BASE_ANG + roll,
+                0.32 * KEY_SURGE * SWAY["hop"] * math.sin(hp - 1.4), hp)
     if gait == CRUISE:
-        return (BASE_ANG + 0.05 * KEY_YAW * math.sin(2.0 * math.pi * 0.35 * ta),
-                0.0, ph)
-    # not a swimmer: turning in shear, and nothing else. On its own clock,
-    # much slower than the water's, because a specimen rotating while you
-    # read the two words beside it is a specimen you cannot read.
-    return (BASE_ANG + 2.0 * math.pi * (t % KEY_SPIN_S) / KEY_SPIN_S, 0.0, ph)
+        cp = 2.0 * math.pi * 0.35 * ta
+        return (BASE_ANG + roll + 0.05 * KEY_YAW * math.sin(cp),
+                0.32 * KEY_SURGE * SWAY["cruise"] * math.cos(cp * 0.5), ph)
+    # Not a swimmer -- but not inert either. It is in water, and water moves,
+    # so it rides: a slow roll on its own clock and a small sway on another,
+    # neither of them the organism's doing. That is the whole difference
+    # between a diatom and a copepod, said without a word.
+    dp = 2.0 * math.pi * t / (KEY_SPIN_S * 1.9)
+    return (BASE_ANG + roll,
+            0.32 * KEY_SURGE * SWAY["drift"] * math.sin(dp), ph)
 
 
 def _specimen(c, kind, cx, cy, seed=1, t=0.0):
@@ -416,18 +487,23 @@ def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,
         if ry > bot or ry + ROW_H < top:
             continue                            # off the plate, skip the work
         cy = ry + ROW_H // 2
+        avail = w - 10 - TEXT_X
         _specimen(canvas, kind, SPEC_X, cy, seed=i + 1, t=t)
         name = NAMES.get(kind, "?")
-        nsc = fit_scale(name, w - 10 - TEXT_X)
-        text(canvas, TEXT_X, ry + 4, name, scale=nsc)
-        ty = ry + 4 + text_height(nsc) + 4
-        role = ROLES.get(kind, "")
-        # lo=T_MED, not lo=1: if a role ever outgrows its column the right
+        nsc = fit_scale(name, avail)
+        text(canvas, TEXT_X, ry + 5, name, scale=nsc)
+        ty = ry + 5 + text_height(nsc) + 5
+        # lo=T_MED, not lo=1: if a line ever outgrows its column the right
         # answer is to shorten the words, not to print them at a size that
         # defeats the point of this whole pass
-        text(canvas, TEXT_X, ty, role,
-             scale=fit_scale(role, w - 10 - TEXT_X, hi=T_MED, lo=T_MED))
-        by = ty + text_height(T_MED) + 9
+        line = "%s %s" % (SIZES.get(kind, ""), GROUPS.get(kind, ""))
+        text(canvas, TEXT_X, ty, line.strip(),
+             scale=fit_scale(line, avail, hi=T_MED, lo=T_MED))
+        ty += text_height(T_MED) + 4
+        fact = FACTS.get(kind, "")
+        text(canvas, TEXT_X, ty, fact,
+             scale=fit_scale(fact, avail, hi=T_MED, lo=T_MED))
+        by = ty + text_height(T_MED) + 10
         abundance_bar(canvas, TEXT_X, by, bar_w, x)
         lab = abundance_label(x)
         text(canvas, w - 10 - text_width(lab, scale=T_MED), by - 4, lab,
