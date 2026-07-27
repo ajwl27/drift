@@ -1029,6 +1029,75 @@ Ranked by probability × damage.
 
 ---
 
+## 10m. Names on the chart, and the camera move you can actually watch
+
+### The chart says where you are now
+
+A chart with an unnamed coast is a shape. You can tell it is land and you
+cannot tell whether it is Patagonia or Portugal, so the map screen was
+answering "where is the ship" with a dot and a latitude and leaving the more
+interesting half of the question alone.
+
+**Not cities.** The obvious source is Natural Earth's populated places, and it
+is the wrong one. This is a voyage of 1577-1580 and the gift boxes cover
+others from 1519 to 1836. Montevideo was founded in 1726 and Wellington in
+1839; a chart of Drake's circumnavigation labelled with either is a chart of a
+voyage that did not happen. Filtering a modern city list by founding date is
+possible, is a research project, and would still produce a list of settlements
+on a chart drawn by people who navigated by capes.
+
+**Two layers instead, both period-safe by construction.**
+
+1. **The voyage's own anchorages** — already in the waypoint table, already
+   named and dated. PLYMOUTH, MOGADOR, PORT ST JULIAN, SIERRA LEONE. Free, and
+   the most useful labels there are, because they are where this ship stopped.
+2. **Geography** — capes, straits, bays, island groups, passages. A headland
+   has no founding date. `places.py` carries seventy of them at three ranks,
+   hand-built, about half a kilobyte in flash. Hand-built is what keeps a
+   modern coastal conurbation from creeping in.
+
+**Rank depends on zoom, and it has to.** The first version filled the Pacific
+with twelve Peruvian roadsteads and never got as far as CAPE HORN, because the
+anchorages sorted first and there were more of them than the frame could hold.
+On the globe you want the half-dozen names that orient a hemisphere; at chart
+scale you want every stop the ship made. The two always worth naming at any
+zoom are where the ship is and where it is going next.
+
+Placement is greedy against the boxes already occupied, in priority order,
+with the caption zones reserved. **A label that will not fit is dropped rather
+than shuffled** — a chart whose names have been nudged off their features to
+make room is worse than a chart with fewer names.
+
+`docs/chart_places.png`: the globe now reads CARIBBEAN / PANAMA / GALAPAGOS /
+RIVER PLATE, and the chart reads CALLAO / CHULE / PISAGUA / ARICA.
+
+### The camera move, on a clock
+
+The console could show the globe, a middle radius and the chart as three
+photographs, which is not the same as being able to judge the move. It now has
+a fourth setting, **run**, which plays the whole thing on the cadence's own
+clock and loops it — which is exactly what the panel will do.
+
+And four new sliders, under TIMING:
+
+| | | default |
+|---|---|---|
+| `key dwell` | the plate pans its whole list over this, so it *is* the scroll speed | 90 s |
+| `map: globe` | hold on the globe before the dolly starts | 3.0 s |
+| `map: zoom` | the dolly itself | 7.0 s |
+| `map: chart` | hold at chart scale before cutting away | 8.0 s |
+
+Both moving screens are timed by their dwell rather than by a pixels-per-second
+figure nobody can picture: the plate pans its list over its dwell and the map
+dollies globe-to-chart over its own. Set the duration and the speed follows,
+which also means the motion can never drift out of step with the schedule.
+
+`e` now exports the cadence line alongside the motion constants.
+
+`docs/map_dolly.gif` is the move at the current settings.
+
+---
+
 ## 10l. Legibility — **the type, the HUD, and a plate that moves**
 
 Looked at from across the room at true size, the plankton and the chart read

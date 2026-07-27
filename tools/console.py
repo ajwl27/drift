@@ -38,7 +38,7 @@ KEYS
     shift + arrow   fine        ctrl + arrow    coarse
     backspace       reset the selected parameter to its default
     1 2 3           water / map / key plate
-    z               cycle the map through globe, dolly, chart
+    z               cycle the map: globe, mid, chart, run (the real move)
     t               true physical size, with a ruler to calibrate it
     c               plate chrome on/off        space   pause
     r               next seed                  shift+R reset every parameter
@@ -67,7 +67,8 @@ from drift import (Canvas, W, H, Ecosystem, View,               # noqa: E402
                    PANEL_DIAG_IN)
 from mapview import (Coast, R_GLOBE, R_CHART, zoom_radius,     # noqa: E402
                      render_map)
-from screens import draw_screen, WATER, MAP, KEY, GALLERY      # noqa: E402
+from screens import (draw_screen, WATER, MAP, KEY, GALLERY,    # noqa: E402
+                     Cadence, map_radius)
 from keyplate import render_key                                # noqa: E402
 from voyage import Track                                       # noqa: E402
 from keyplate import NAMES                                     # noqa: E402
@@ -79,7 +80,7 @@ COL = 450                    # width of the control column, set so a
                              # 100 mm calibration ruler fits at a
                              # typical desktop monitor density
 RULER_MM = 100               # the calibration bar's true length. Fixed.
-COLH = 1000                  # the control column's own height: sliders,
+COLH = 1190                  # the control column's own height: sliders,
                              # ruler, legend and footer. In true-size mode
                              # the panel is SMALLER than this, so the window
                              # is sized by the controls and not by the art.
@@ -186,6 +187,18 @@ PARAMS = [
     # right one, because desktop scaling settings quietly change it.
     Param("ppi", "monitor ppi", 60.0, 260.0, 108.79, fmt="%.1f",
           group="DISPLAY"),
+    # How long each screen gets, which on the two moving screens IS their
+    # speed: the key plate pans its whole list over its dwell and the map
+    # dollies globe-to-chart over its own, so both are set here rather than
+    # by a pixels-per-second nobody can picture.
+    Param("key", "key dwell", 20.0, 240.0, GALLERY.key, log=True,
+          fmt="%.0f", unit=" s", group="TIMING"),
+    Param("globe", "map: globe", 0.0, 12.0, GALLERY.globe, fmt="%.1f",
+          unit=" s", group="TIMING"),
+    Param("dolly", "map: zoom", 1.0, 40.0, GALLERY.dolly, log=True,
+          fmt="%.1f", unit=" s", group="TIMING"),
+    Param("chart", "map: chart", 0.0, 24.0, GALLERY.chart, fmt="%.1f",
+          unit=" s", group="TIMING"),
 ]
 DEFERRED = ("day", "seed")
 PANEL_PPI = math.hypot(W, H) / PANEL_DIAG_IN
@@ -254,6 +267,7 @@ class Side:
         self.prev_ang = {}
         self.prev_pos = {}
         self.key_t = 0.0         # where the key plate's pan has got to
+        self.map_t = 0.0         # ... and where the map's dolly has
         self.spin = 0.0          # deg per rendered frame, smoothed
         self.speed = 0.0         # px/s, smoothed
         self.frames = 0
@@ -458,8 +472,8 @@ def run(seed=5, day=420.0):
                ("export", (x0 + 152, yb, 70, 24), False),
                ("pause", (x0 + 228, yb, 66, 24), paused)]
         if scr == MAP:
-            for i, nm in enumerate(("globe", "dolly", "chart")):
-                top.append((nm, (x0 + 138 + i * 62, y2, 56, 22), zoom == i))
+            for i, nm in enumerate(("globe", "mid", "chart", "run")):
+                top.append((nm, (x0 + 138 + i * 56, y2, 50, 22), zoom == i))
         return top, bot, w0
 
     def hit(pt, box):
@@ -530,6 +544,11 @@ def run(seed=5, day=420.0):
                  "TURN_SCALE = %.4f" % live.st["turn"],
                  "BODY_TAU = %.3f" % live.st["body"],
                  "TARGET_FPS = %d" % int(round(live.st["fps"])),
+                 "",
+                 "# screens.py, the GALLERY cadence:",
+                 "#   key=%.0f, globe=%.1f, dolly=%.1f, chart=%.1f"
+                 % (live.st["key"], live.st["globe"], live.st["dolly"],
+                    live.st["chart"]),
                  "", "# gait multipliers, folded into the per-species tables:"]
         for name, base, mult in (("HELIX_YAW", BASE_YAW, live.st["hyaw"]),
                                  ("HELIX_HZ", BASE_HZ, live.st["hrate"]),
@@ -575,8 +594,10 @@ def run(seed=5, day=420.0):
                     elif label == "1:1 size":
                         true_size = not true_size
                         screen = pygame.display.set_mode(size(split))
-                    elif label in ("globe", "dolly", "chart"):
-                        zoom = ("globe", "dolly", "chart").index(label)
+                    elif label in ("globe", "mid", "chart", "run"):
+                        zoom = ("globe", "mid", "chart", "run").index(label)
+                        for sd in sides:
+                            sd.map_t = 0.0
                     elif label == "pause":
                         paused = not paused
                     elif label == "reseed":
@@ -630,7 +651,9 @@ def run(seed=5, day=420.0):
                 elif ev.key == pygame.K_3:
                     scr = KEY
                 elif ev.key == pygame.K_z:
-                    zoom = (zoom + 1) % 3
+                    zoom = (zoom + 1) % 4
+                    for sd in sides:
+                        sd.map_t = 0.0
                 elif ev.key == pygame.K_c:
                     view.plate = not view.plate
                 elif ev.key == pygame.K_t:
@@ -674,25 +697,34 @@ def run(seed=5, day=420.0):
             screen = pygame.display.set_mode(size(split))
 
         # ---- advance and render each side -----------------------------
-        R = (R_GLOBE, zoom_radius(0.55), R_CHART)[zoom]
         for side in sides:
             if not paused and side.due(real_dt):
                 side.advance()
                 if scr == MAP:
-                    # the zoom is a control here rather than a phase of the
-                    # cadence, which is the point: you can sit on the globe
-                    # for as long as you like and look at it
+                    # Three fixed stops, and then the thing the panel will
+                    # actually do: "run" plays the whole camera move on the
+                    # cadence's own clock, looping, so the move can be judged
+                    # as a move rather than as three photographs of it.
+                    cad = Cadence(GALLERY.water, side.st["globe"],
+                                  side.st["dolly"], side.st["chart"],
+                                  side.st["key"], GALLERY.fade)
+                    if zoom == 3:
+                        dur = cad.globe + cad.dolly + cad.chart
+                        side.map_t = (side.map_t + 1.0 / side.st["fps"]) % dur
+                        R = map_radius(side.map_t, cad)
+                    else:
+                        R = (R_GLOBE, zoom_radius(0.55), R_CHART)[zoom]
                     render_map(side.canvas, coast, track, side.eco.t, R,
                                chrome=view.plate)
                 elif scr == KEY:
                     # drive the pan from a wall clock the console owns, so
                     # you can watch a whole pass without waiting for the
                     # cadence to come round to it
-                    side.key_t = (getattr(side, "key_t", 0.0)
-                                  + 1.0 / side.st["fps"]) % GALLERY.key
+                    side.key_t = ((side.key_t + 1.0 / side.st["fps"])
+                                  % side.st["key"])
                     render_key(side.canvas, side.eco, track, side.eco.t,
                                chrome=view.plate, t_into=side.key_t,
-                               dwell=GALLERY.key)
+                               dwell=side.st["key"])
                 else:
                     draw_screen(side.canvas, scr,
                                 GALLERY.duration(scr) * 0.5, side.eco,
@@ -776,7 +808,7 @@ def run(seed=5, day=420.0):
                      "shift    fine          ctrl        coarse",
                      "backspace  reset this one",
                      "",
-                     "1 2 3    water / map / key      z  map zoom",
+                     "1 2 3    water / map / key    z  map zoom / run",
                      "c  plate   t  true size   space  pause   r  seed",
                      "tab      A/B split against a saved copy",
                      "e        export to docs/tuned_values.txt",

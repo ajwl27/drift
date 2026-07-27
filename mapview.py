@@ -14,6 +14,7 @@ import struct
 from drift import (Canvas, W, H, text, text_width, text_height, fit_scale,
                    label, trim, wrap, T_BIG, T_MED)
 from voyage import Camera, Track, fill_radius, span_km
+import places
 
 
 # --------------------------------------------------------------------------
@@ -264,6 +265,73 @@ def draw_caption(c, track, day, w=W, h=H):
 NORTH_UP = True
 
 
+def draw_places(c, cam, track, day, R, w=W, h=H):
+    """Names on the coast.
+
+    Two sources, both period-safe: the voyage's own anchorages, which are in
+    the waypoint table already, and geography -- capes, straits, island
+    groups -- which has no founding date. See places.py for why this is not
+    a list of cities.
+
+    Placement is greedy against a list of boxes already occupied, in priority
+    order: the ship's own stops first, then geography by rank, then by
+    distance from the middle of the frame. A label that will not fit is
+    dropped rather than shuffled, because a chart where the names have been
+    nudged off their features to make room is worse than a chart with fewer
+    names."""
+    taken = [(0, 0, w, 60), (0, h - 76, w, 76)]      # caption zones
+
+    def fits(x, y, tw, th):
+        for bx, by, bw, bh in taken:
+            if (x < bx + bw and x + tw > bx
+                    and y < by + bh and y + th > by):
+                return False
+        return 0 <= x and x + tw <= w and 0 <= y and y + th <= h
+
+    # Rank governs both what appears and what wins the space, and it has to
+    # depend on zoom or the anchorages swamp everything: at globe scale the
+    # first version filled the Pacific with twelve Peruvian roadsteads and
+    # never got as far as CAPE HORN. On the globe you want the half-dozen
+    # names that orient a hemisphere; at chart scale you want every stop the
+    # ship made. The two places that are always worth naming, at any zoom,
+    # are where the ship is and where it is going next.
+    mr = places.rank_for(R, R_GLOBE, R_CHART)
+    cap = (6, 10, 14)[mr - 1]
+    port, _away = track.next_port(day)
+    here = track.anchored(day)
+
+    cands = []
+    seen = set()
+    for wp in track.wp:                              # the ship's own stops
+        if not wp[4] or wp[4] in seen:
+            continue
+        seen.add(wp[4])
+        rank = 0 if wp[4] in (port, here) else 2
+        if rank > mr:
+            continue
+        x, y, vis = cam.project(wp[1], wp[2], w, h)
+        if vis and -20 <= x <= w + 20 and -10 <= y <= h + 10:
+            cands.append((rank, x, y, wp[4]))
+    for x, y, rank, name in places.visible(cam, w, h, mr):
+        if name in seen:
+            continue
+        cands.append((rank, x, y, name))
+    cands.sort(key=lambda t: (t[0], abs(t[2] - h * 0.5) + abs(t[1] - w * 0.5)))
+
+    th = text_height(T_MED)
+    for _rank, x, y, name in cands[:cap]:
+        s = trim(name, w - 40)
+        tw = text_width(s, scale=T_MED)
+        # right of the mark by preference, left if that runs off the frame
+        for ox in (7, -7 - tw):
+            tx, ty = x + ox, y - th // 2
+            if fits(tx - 2, ty - 2, tw + 4, th + 4):
+                c.circle(x, y, 2)
+                label(c, tx, ty, s, scale=T_MED)
+                taken.append((tx - 3, ty - 3, tw + 6, th + 6))
+                break
+
+
 def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):
     """One frame of the map interlude."""
     canvas.clear()
@@ -274,6 +342,8 @@ def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):
     coast.draw(canvas, cam, w, h)
     draw_limb(canvas, cam, w, h)
     draw_track(canvas, track, cam, day, w, h)
+    if chrome:
+        draw_places(canvas, cam, track, day, R, w, h)
     draw_ship(canvas, cam, w, h)
     if chrome:
         draw_scale(canvas, cam, w, h)
