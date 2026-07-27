@@ -47,24 +47,31 @@ NAMES = {
     KRILL: "EUPHAUSIA",
 }
 
-# Under each name, two lines: what it is and how big, then one thing about it
-# worth knowing.
+# ONE LINE UNDER THE NAME: how big it is and what it is. Nothing else.
 #
-# The first version said "GRAZER  SWARMS" -- a trophic role and a verb, in
-# telegraphese, and it read oddly for a reason worth naming. It was written
-# for a plate where the second line had nineteen characters and had to earn
-# every one, so it compressed two facts into two words and lost the grammar
-# that made either of them a statement. And "grazer" was the wrong fact
-# anyway: the name above it is already the organism, and what a visitor
-# actually cannot get from the drawing is HOW BIG IT IS. Everything on this
-# plate is drawn at the same size on purpose, which is what makes the
-# morphology comparable and is also, unavoidably, a lie about scale. The
-# caption is where that lie gets corrected.
+# This went through three versions and the third is the shortest, which is
+# usually the sign.
 #
-# So: size and group, then a fact. Sizes are hand-written LENGTH ranges
-# rather than the model's equivalent spherical diameters, because ESD is a
-# modelling convenience and a viewer holding a ruler to a krill is measuring
-# its length.
+# It began as "GRAZER  SWARMS" -- a trophic role and a verb, in telegraphese,
+# because the column had nineteen characters and no grammar would fit in
+# them. Then it grew a third line carrying one memorable thing about each
+# organism: A PILLBOX OF GLASS, ROWS WITH ANTENNAE. Those were nice to read
+# and they were the wrong register for this object. A plate key states; it
+# does not narrate. The moment one row says something charming the next row
+# has to as well, and what began as a caption is a voice.
+#
+# So: size and class, both of them checkable, and the drawing does the rest.
+# The morphology is right there at fifteen pixels and it is the whole reason
+# the piece exists -- a line of prose underneath it is a second-hand account
+# of something the viewer is already looking at.
+#
+# Sizes are hand-written LENGTH ranges rather than the model's equivalent
+# spherical diameters, because ESD is a modelling convenience and a viewer
+# holding a ruler to a krill is measuring its length. This is the one thing a
+# visitor genuinely cannot get from the plate: everything is drawn at a
+# comparable size on purpose, which is what makes the morphologies comparable
+# and is also, unavoidably, a lie about scale. The caption is where that lie
+# gets corrected, and correcting it is enough work for one line.
 SIZES = {
     FLAGELLATE: "1-3 UM", COCCO: "5-10 UM", THALASSIO: "10-30 UM",
     CHAIN: "10-50 UM", PENNATE: "20-60 UM", CORETHRON: "50-100 UM",
@@ -81,37 +88,16 @@ SIZES = {
 GROUPS = {
     RADIOLARIAN: "RADIOLARIAN", CENTRIC: "DIATOM", PENNATE: "DIATOM",
     CHAIN: "DIATOM", CERATIUM: "DINOPHYTE", COPEPOD: "COPEPOD",
-    TINTINNID: "CILIATE", COCCO: "HAPTOPHYTE", FLAGELLATE: "PICOPLANKTON",
+    # GREEN ALGA, not PICOPLANKTON: picoplankton is a size class and the
+    # size is already on the same line, so it would be the only entry in this
+    # table that told you nothing new. Micromonas is a prasinophyte.
+    TINTINNID: "CILIATE", COCCO: "HAPTOPHYTE", FLAGELLATE: "GREEN ALGA",
     THALASSIO: "DIATOM", RHIZO: "DIATOM", CORETHRON: "DIATOM",
     ACANTHARIA: "ACANTHARIAN", FORAM: "FORAMINIFER", ORNITHO: "DINOPHYTE",
     TRICHO: "CYANOPHYTE", SALP: "TUNICATE", KRILL: "KRILL",
 }
 
-# One thing each. Chosen to be the thing you can SEE in the drawing beside
-# it, so the line and the picture explain each other -- a caption that names
-# a feature you cannot find is worse than no caption.
-FACTS = {
-    RADIOLARIAN: "SPINES OF OPAL",
-    CENTRIC: "A PILLBOX OF GLASS",
-    PENNATE: "GLIDES ON MUCUS",
-    CHAIN: "LINKED BY BRISTLES",
-    CERATIUM: "THREE LONG HORNS",
-    COPEPOD: "ROWS WITH ANTENNAE",
-    TINTINNID: "LIVES IN A VASE",
-    COCCO: "ARMOURED IN CHALK",
-    FLAGELLATE: "AMONG THE SMALLEST",
-    THALASSIO: "BEADS ON A THREAD",
-    RHIZO: "A NEEDLE OF GLASS",
-    CORETHRON: "A CROWN OF SPINES",
-    ACANTHARIA: "TEN CRYSTAL RODS",
-    FORAM: "CHAMBERED IN CHALK",
-    ORNITHO: "CARRIES A SAIL",
-    TRICHO: "FIXES NITROGEN GAS",
-    SALP: "A BARREL THAT JETS",
-    KRILL: "SWARMS IN MILLIONS",
-}
-
-ROW_H = 82           # name, size and group, fact, bar
+ROW_H = 64           # name, size and class, bar
 SPEC_X = 26          # centre of the specimen column
 TEXT_X = 52          # set by the longest lines: COSCINODISCUS is thirteen
                      # characters at T_BIG and 0.1-2 MM RADIOLARIAN is twenty
@@ -121,7 +107,13 @@ TEXT_X = 52          # set by the longest lines: COSCINODISCUS is thirteen
                      # to the specimen.
 SPEC_HALF = 24       # nothing in the specimen column may reach further than
                      # this from its centre, or it climbs into the name
-NUM_W = 44           # right-hand column, four characters of abundance
+# No right-hand number. The bar carries the abundance and the figure beside
+# it was answering a question nobody had: "1.4" is 1.4 times the scarcest any
+# organism ever gets anywhere on the voyage, which is a real quantity, an
+# honest one, and completely opaque at a glance. The bar with its decade
+# ticks says the same thing in the only way that reads from a sofa -- longer
+# is more, each tick is ten times -- and it says it without asking anyone to
+# hold a reference value in their head.
 
 # Drawing radius per type for the key column, hand-set rather than derived.
 # EXTENT is a separation radius and is deliberately isotropic, so it does not
@@ -349,18 +341,6 @@ def census(eco):
     return rows
 
 
-def abundance_label(x):
-    """Four characters at most, because that is what the column is worth.
-    Below 10 it is worth a decimal; above 999 nobody cares about the units."""
-    if x < 9.95:
-        return ("%.1f" % x).rstrip("0").rstrip(".")
-    if x < 999.5:
-        return "%d" % int(round(x))
-    if x < 99500:
-        return "%dK" % int(round(x / 1000.0))
-    return ">99K"
-
-
 def abundance_bar(c, x0, y, wpx, x):
     """Log scale, with a tick at each decade.
 
@@ -503,7 +483,7 @@ def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,
     span = max(0.0, len(rows) * ROW_H - (bot - top))
     off = _pan(t_into, dwell, span)
 
-    bar_w = w - 10 - NUM_W - 8 - TEXT_X
+    bar_w = w - 10 - TEXT_X
     canvas.clip(0, top, w, bot)
     for i, (kind, n, mass, x) in enumerate(rows):
         ry = top - off + i * ROW_H
@@ -522,15 +502,8 @@ def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,
         line = "%s %s" % (SIZES.get(kind, ""), GROUPS.get(kind, ""))
         text(canvas, TEXT_X, ty, line.strip(),
              scale=fit_scale(line, avail, hi=T_MED, lo=T_MED))
-        ty += text_height(T_MED) + 4
-        fact = FACTS.get(kind, "")
-        text(canvas, TEXT_X, ty, fact,
-             scale=fit_scale(fact, avail, hi=T_MED, lo=T_MED))
         by = ty + text_height(T_MED) + 10
         abundance_bar(canvas, TEXT_X, by, bar_w, x)
-        lab = abundance_label(x)
-        text(canvas, w - 10 - text_width(lab, scale=T_MED), by - 4, lab,
-             scale=T_MED)
     canvas.clip()
 
     if chrome:

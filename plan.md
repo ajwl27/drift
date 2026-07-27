@@ -1261,20 +1261,41 @@ plate is drawn at a comparable size on purpose, which is what makes the
 morphologies comparable and is also, unavoidably, a lie about scale. The
 caption is where that lie gets corrected.
 
-Three lines now, and the row is 82 px rather than 66:
+It then grew a third line carrying one memorable thing about each organism --
+A PILLBOX OF GLASS, ROWS WITH ANTENNAE -- and that went too. Those were nice
+to read and they were the wrong register. **A plate key states; it does not
+narrate.** The moment one row says something charming the next row has to as
+well, and what began as a caption is a voice. The morphology is right there
+at fifteen pixels and it is the whole reason the piece exists; a line of prose
+underneath is a second-hand account of something the viewer is already
+looking at.
+
+So: **two lines, both checkable**, and the row is back to 64 px.
 
     CALANUS
     2-5 MM COPEPOD
-    ROWS WITH ANTENNAE
 
 Sizes are hand-written **length** ranges, not the model's equivalent spherical
 diameters: ESD is a modelling convenience and a visitor holding a ruler to a
-krill is measuring its length. Group words are all twelve characters or fewer
-so they fit at reading size -- DINOPHYTE rather than DINOFLAGELLATE,
-FORAMINIFER rather than FORAMINIFERAN, both correct, and a word that has to be
-shrunk to fit is a word nobody reads. And each fact names something **you can
-see in the drawing beside it**, because a caption pointing at a feature you
-cannot find is worse than no caption at all.
+krill is measuring its length. This is the one thing a visitor genuinely
+cannot get from the plate, since everything is drawn at a comparable size on
+purpose -- which is what makes the morphologies comparable and is also,
+unavoidably, a lie about scale. Correcting that lie is enough work for one
+line.
+
+Class words are all twelve characters or fewer so they fit at reading size --
+DINOPHYTE rather than DINOFLAGELLATE, FORAMINIFER rather than FORAMINIFERAN,
+both correct, and a word that has to be shrunk to fit is a word nobody reads.
+GREEN ALGA rather than PICOPLANKTON, because picoplankton is a *size* class
+and the size is already on the same line, so it would have been the only
+entry in the table that told you nothing new.
+
+**And the abundance figure went.** "1.4" means 1.4 times the scarcest any
+organism ever gets anywhere on the voyage -- a real quantity, an honest one,
+and completely opaque at a glance. The bar with its decade ticks says the same
+thing in the only way that reads from a sofa: longer is more, each tick is ten
+times. It says it without asking anyone to hold a reference value in their
+head, which is what the number required and never explained.
 
 ---
 
