@@ -53,6 +53,8 @@ judgements made silently.
 
 import math
 
+import draw
+
 # --------------------------------------------------------------------------
 # 1. THE ROSTER
 # --------------------------------------------------------------------------
@@ -606,6 +608,40 @@ RANGE = {
     BRISTLEMOUTH:((-40.0, 67.0), ALL_BASINS),
     HATCHETFISH: ((-56.0, 60.0), ALL_BASINS),
     VIPERFISH:   ((-56.0, 70.0), ALL_BASINS),
+}
+
+
+# --------------------------------------------------------------------------
+# 1c. MORPHOLOGY  -  which body plan each species is drawn with
+# --------------------------------------------------------------------------
+#
+# Sixteen plans for thirty-three species, and where several share one they
+# still differ: draw.py's Form is scale-free, and the length, the swimming
+# mode and the drawn size come from the species record. Two scombrids are the
+# same plan and not the same drawing.
+#
+# The dependency runs one way -- fish imports draw, draw imports nothing --
+# so the morphology module stays a pure function of shape and can be tested
+# without an ocean.
+FORM = {
+    ANCHOVETA: draw.ANCHOVYISH, SARDINE: draw.CLUPEID,
+    HERRING: draw.CLUPEID, PILCHARD_EU: draw.CLUPEID,
+    MACKEREL: draw.MACKERELISH, CHUB: draw.MACKERELISH,
+    JACKMACK: draw.CARANGID, TREVALLY: draw.CARANGID,
+    SKIPJACK: draw.SCOMBRID, YELLOWFIN: draw.SCOMBRID,
+    BLUEFIN: draw.SCOMBRID, WAHOO: draw.WAHOOISH,
+    MARLIN: draw.BILLFISH, DORADO: draw.CORYPHAENID,
+    FLYINGFISH: draw.EXOCOETID,
+    BLUESHARK: draw.SHARK, WHALESHARK: draw.WHALESHARKISH,
+    COD: draw.GADOID, HAKE_EU: draw.GADOID, HAKE_CL: draw.GADOID,
+    HAKE_ZA: draw.GADOID, GRENADIER: draw.GRENADIERISH,
+    TOOTHFISH: draw.NOTOTHENIOID, ICEFISH: draw.NOTOTHENIOID,
+    SILVERFISH: draw.NOTOTHENIOID,
+    SNOEK: draw.GEMPYLID,
+    GROUPER: draw.SERRANID, FUSILIER: draw.CAESIONID,
+    LANTERNFISH: draw.MYCTOPHID, WARMING: draw.MYCTOPHID,
+    BRISTLEMOUTH: draw.GONOSTOMATID, HATCHETFISH: draw.STERNOPTYCHID,
+    VIPERFISH: draw.STOMIID,
 }
 
 
