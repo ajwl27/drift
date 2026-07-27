@@ -62,8 +62,34 @@ LON = 0.0200
 Z_MAX = 55.0              # metres of water column mapped to the panel height
 MAX_PHYTO = 30             # separate caps, or phytoplankton crowd out the
 MAX_ZOO = 7                # grazers entirely during a bloom
-IMMIGRATION = 0.7          # new arrivals per day, at any population. See the
-                           # note in the immigration block of step().
+IMMIGRATION = 0.35         # background arrivals per day even at anchor: the
+                           # "everything is everywhere" term, now subordinate
+                           # to advection.
+
+# --- advection -----------------------------------------------------------
+# The community was grown in place, which is the right model for a moored
+# instrument and the wrong one for a ship. Drake makes 80 to 180 km on a good
+# day; the panel is showing NEW WATER every day or two, so the community is
+# overwhelmingly carried in from ahead rather than descended from what was
+# there yesterday.
+#
+# This is not a refinement. The satellite check said the drivers correlate
+# with real chlorophyll at rho +0.68 and the population's response at +0.03,
+# and that smoothing recovered nothing -- a population carrying a memory of
+# weeks was being towed through water that changes in days, so its biomass
+# reflected where it was in its own internal cycle rather than the water it
+# was in. No parameter fixes a timescale mismatch.
+FLUSH_PER_100KM = 0.55     # fraction of the field replaced per day at 100
+                           # km/day. Residence half-life about 1.3 days under
+                           # way, which is fast enough to track the water and
+                           # slow enough to watch a cell drift and divide.
+CAP_EXP = 0.45             # n_visible goes as capacity^0.45 -- this is the
+                           # compression from the plan's section 1, which
+                           # until now was never actually implemented: the
+                           # agent count was capped and culled instead, which
+                           # is a different thing and a worse one.
+CAP_SCALE = 13.0
+N_FLOOR = 9                # the panel is never bare
 MAX_AGENTS = MAX_PHYTO + MAX_ZOO   # render cost lives here
 SNOW_COUNT = 80            # fine unresolved detritus, decorative
 MAX_DETRITUS = 46          # resolved particles, from actual deaths
@@ -369,6 +395,8 @@ class Environment:
         self.cloud = 0.5
         self.storm = 0.0
         self.temp_anomaly = 0.0
+        self._light_day = -1
+        self._light_mean = 0.0
 
     def where(self, t_days):
         if self.track is None:
@@ -464,6 +492,21 @@ class Environment:
             return 0.0
         clear = 0.25 + 0.75 * (1.0 - self.cloud)
         return math.sin(elev) * clear
+
+    def daily_light(self, t_days):
+        """Mean surface irradiance over the whole day.
+
+        Capacity is a property of the water, not of the hour -- and sampling
+        instantaneous light meant that on any step that happened to land near
+        midnight the model concluded the ocean could support nothing. Cached
+        per simulated day, so this is six solar evaluations a day rather than
+        six a step."""
+        d = int(t_days)
+        if self._light_day != d:
+            self._light_day = d
+            self._light_mean = sum(
+                self.surface_light(d + (k + 0.5) / 6.0) for k in range(6)) / 6.0
+        return self._light_mean
 
     def mixed_layer_depth(self, t_days):
         if self.ocean is not None:
@@ -1556,6 +1599,128 @@ class Ecosystem:
         i = int(z / BIN_M)
         return 0 if i < 0 else (NBINS - 1 if i >= NBINS else i)
 
+    def _fitness(self, t):
+        """Realised growth rate per drifter type in the water the ship is
+        entering, as the weights for what arrives.
+
+        This is the part that makes advection honest rather than a lookup. We
+        are not saying which organisms live here; we are computing, from the
+        same traits and the same equations the resident cells use, which ones
+        would be growing in the water upstream -- because that water has been
+        growing them. Eighteen evaluations of an expression the model already
+        contains, once per step."""
+        env = self.env
+        surface = env.surface_light(t)
+        chl = self.biomass / MAX_PHYTO
+        I = self.light_at(8.0, surface, chl)
+        T = env.temperature(t, 8.0)
+        mld = env.mixed_layer_depth(t)
+        n = self._deep_n
+        fe = self._iron
+        r = mld / Z_MAX
+        out = {}
+        for k in DRIFTER_KINDS:
+            d = DERIVED[k]
+            if k in DIAZOTROPHS:
+                f_nut = (fe / (fe + 0.12 * d[1] * DIAZO_FE_COST)
+                         if T >= DIAZO_T_MIN else 0.0)
+            else:
+                ks = K_S * d[1]
+                f_nut = min(1.0, n / (n + ks), fe / (fe + 0.12 * d[1]))
+            mu = (MU_MAX * d[0] * (I / (I + I_K)) * f_nut * temp_factor(k, T)
+                  - d[7] - 0.30 * r / (0.55 + r))
+            if TROPHY[k] == MIXO:
+                mu = 0.62 * mu + 0.10        # mixotrophs eat as well
+            out[k] = max(0.0, mu)
+        return out
+
+    def _capacity(self, t):
+        """How much life this water can carry, uncapped. The compression to a
+        countable number of sprites happens once, here, rather than being
+        smeared across a cap and a cull.
+
+        Nutrient supply times an iron ceiling times a light-and-temperature
+        gate -- which is deliberately the same combination the satellite check
+        found correlates with real chlorophyll at rho +0.68, because that
+        measurement is the best evidence available for what sets standing
+        stock. The first attempt used the best instantaneous growth RATE
+        instead, which is a different quantity: a rate goes to zero in polar
+        winter while the standing stock does not, and capacity collapsed to
+        the floor over half the voyage."""
+        env = self.env
+        I = self.light_at(6.0, env.daily_light(t), self.biomass / MAX_PHYTO)
+        T = env.temperature(t, 6.0)
+        mld = env.mixed_layer_depth(t)
+        # growth potential ignoring nutrients: can anything grow here at all?
+        g = max(MU_MAX * DERIVED[k][0] * temp_factor(k, T) for k in PHOTO_KINDS)
+        g *= I / (I + I_K)
+        gate = g / (g + 0.55)
+        deep = 0.35 + 0.65 / (1.0 + (mld / (2.2 * Z_MAX)) ** 2)
+        return self._deep_n * self._iron * gate * deep
+
+    def _advect(self, dt, t):
+        """Replace the water as the ship moves through it.
+
+        Departures are random: advection does not care how fit a cell is.
+        Arrivals are fitness-weighted, because they come from water that has
+        been growing them. And the number of them follows the capacity of the
+        water ahead, compressed -- so the count tracks the ocean while each
+        individual's mass, and which type actually thrives, stay in the hands
+        of the local dynamics. A bloom is still something that happens."""
+        if self.track is None:
+            return
+        rng = self.rng
+        speed = self.track.speed(t)
+        rate = FLUSH_PER_100KM * speed / 100.0
+        cap = self._capacity(t)
+        n_target = max(N_FLOOR, min(MAX_PHYTO,
+                                    int(round(CAP_SCALE * cap ** CAP_EXP))))
+        self._n_target = n_target
+
+        live = [a for a in self.agents
+                if a.g.kind in DRIFTER_KINDS and not a.doomed]
+        n = len(live)
+
+        if rate > 0.0:
+            p = rate * dt
+            for a in live:
+                if rng.random() < p:
+                    self._leave(a)
+            n -= sum(1 for a in live if a.doomed)
+
+        # arrivals, pulled toward the target. The rate is the flush rate plus
+        # a restoring term, so the population converges even at anchor.
+        want = n_target - n
+        arrive = (rate * n_target + max(0.0, want) * 0.9 + IMMIGRATION) * dt
+        while arrive > 0.0:
+            if rng.random() < min(1.0, arrive):
+                if n < MAX_PHYTO:
+                    a = self._spawn_drifter(kind=self._fit_kind(t))
+                    a.mass = rng.uniform(0.45, 0.95)
+                    n += 1
+            arrive -= 1.0
+        if n > n_target + 2:
+            self._enforce_cap(n_target)
+
+    def _fit_kind(self, t):
+        """Weighted by fitness, but never zero: a type that is losing here
+        still arrives occasionally, because the ocean is not sterile of it and
+        because a model that only imports winners cannot discover anything."""
+        f = self._fitness(t)
+        rng = self.rng
+        w = [0.04 + f.get(k, 0.0) for k in DRIFTER_KINDS]
+        pick = rng.random() * sum(w)
+        for k, wt in zip(DRIFTER_KINDS, w):
+            pick -= wt
+            if pick <= 0.0:
+                return k
+        return DRIFTER_KINDS[-1]
+
+    def _leave(self, a):
+        """Carried out of frame. Not death: no detritus, no ammonium."""
+        if not a.doomed:
+            a.doomed = True
+
     def _seed_kind(self):
         """Which type arrives next.
 
@@ -1582,10 +1747,10 @@ class Ecosystem:
                 return k
         return DRIFTER_KINDS[-1]
 
-    def _spawn_drifter(self, parent=None):
+    def _spawn_drifter(self, parent=None, kind=None):
         r = self.rng
         if parent is None:
-            g = Genome(self._seed_kind(), r)
+            g = Genome(kind if kind is not None else self._seed_kind(), r)
             z = r.uniform(2, Z_MAX * 0.85)
             # arrive at an edge and drift in, rather than appearing mid-frame
             x = r.uniform(-5, 5) if r.random() < 0.5 else r.uniform(W - 5, W + 5)
@@ -1622,13 +1787,13 @@ class Ecosystem:
         self.agents.append(a)
         return a
 
-    def _enforce_cap(self):
+    def _enforce_cap(self, limit=None):
         """Cull to MAX_PHYTO, weakest first. Vigour is the running integral of
         realised growth rate, so it is exactly the right measure: the cells
         that go are the ones the environment was already failing."""
         live = [a for a in self.agents
                 if a.g.kind in DRIFTER_KINDS and not a.doomed]
-        excess = len(live) - MAX_PHYTO
+        excess = len(live) - (MAX_PHYTO if limit is None else limit)
         if excess <= 0:
             return
         live.sort(key=lambda a: (a.vigour, a.mass))
@@ -1651,6 +1816,7 @@ class Ecosystem:
 
     _deep_n = N_DEEP
     _iron = 1.0
+    _n_target = 20
 
     def _mix_nitrogen(self, dt, mld, mixing):
         nb = max(1, min(NBINS, int(mld / BIN_M) + 1))
@@ -1926,7 +2092,13 @@ class Ecosystem:
             else:
                 target = 9.0 + 24.0 * (0.5 + 0.5 * a.g.curl)
                 a.z += (target - a.z) * min(1.0, 0.5 * dt)
-            a.mass += self._ingest(a, dt) * HET_ASSIM[k]
+            # Grazers get the thermal niche the drifters have always had.
+            # Without it a krill with a 4 C optimum fed happily in 28 C water
+            # and the tropical gyres filled with Euphausia, which is a
+            # Southern Ocean animal. The niche was in the trait table the
+            # whole time; only the phototrophs were reading it.
+            tf = temp_factor(k, env.temperature(t, a.z))
+            a.mass += self._ingest(a, dt) * HET_ASSIM[k] * min(1.6, tf)
             # maintenance is allometric here too: a salp costs little to run
             a.mass -= DERIVED[k][7] * 3.2 * dt
             # A grazer that cannot divide because its class is full used to
@@ -1978,11 +2150,7 @@ class Ecosystem:
         # worst. A hard cap is a rendering constraint; making it a rendering
         # constraint that culls the least fit is the only way to stop it
         # behaving like an ecological one.
-        n_phyto = sum(1 for a in self.agents
-                      if a.g.kind in DRIFTER_KINDS and not a.doomed)
-        rate = IMMIGRATION + 4.0 * max(0.0, 1.0 - n_phyto / 12.0)
-        if rng.random() < rate * dt:
-            self._spawn_drifter().mass = rng.uniform(0.30, 0.55)
+        self._advect(dt, t)
         self._enforce_cap()
         if sum(1 for a in self.agents if a.g.kind in HET_KINDS) < MAX_ZOO:
             if rng.random() < 1.2 * dt:

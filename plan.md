@@ -959,6 +959,7 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 | **5** | ✅ New morphologies | Eleven added, roster of 18. Extents measured rather than guessed. All checks pass. | done |
 | **5b** | ✅ Sea routing | `tools/make_landmask.py` + `tools/make_route.py`. Both voyages audit at zero land crossings. Build-time only. | done |
 | **6a** | ✅ External validation | `tools/check_chlorophyll.py`. MODIS chlorophyll along the track. The result is in §10c and it is the most important thing the project has learned. | done |
+| **7** | ✅ Advection | Your idea, and it took ρ from +0.070 to **+0.528**. See §10d. | done |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |
@@ -1025,6 +1026,74 @@ Ranked by probability × damage.
    needs 360 kB of PSRAM the Pico 2 does not have. Mitigation: order the panel
    early (Stage 2, not Stage 7) so a sourcing problem surfaces while there is still
    a year of software to write.
+
+---
+
+## 10d. Advection — **built, and it worked**
+
+Your idea, promoted from §8c to Stage 7 because the satellite check said it was
+the fix for the headline defect rather than a nice-to-have. It was.
+
+| | Spearman ρ vs MODIS chlorophyll |
+|---|---|
+| before | +0.070 |
+| **after** | **+0.528** |
+| ceiling, set by the drivers themselves | +0.675 |
+
+**The model now recovers 78% of the available signal**, from 10%.
+
+How it works. Departures are **random** — advection does not care how fit a
+cell is. Arrivals are **fitness-weighted**, evaluated with the same traits and
+the same equations the resident cells use, because the water upstream has been
+growing them; and never zero-weighted, because a model that only imports
+winners cannot discover anything. The **number** of arrivals follows the
+capacity of the water, so the count tracks the ocean while each individual's
+mass — and which type actually thrives — stay with the local dynamics. A bloom
+is still something that happens.
+
+The flush rate is `0.55 × speed / 100 km/day`, a residence half-life of about
+1.3 days under way and **zero at anchor**, so `Track.speed()` finally does
+something visible: under way the water is replaced, at anchor the community
+develops in place. The footer has said "AT SEA" or "ANCHORED" since Stage 2;
+now it means something.
+
+**This is also where §1's compression finally got implemented.** The plan said
+"let the model's biomass be honest, then map it to individuals sub-linearly" —
+and what actually existed was a hard agent cap with a cull, which is a
+different thing and a worse one. Capacity is now computed uncapped and
+compressed once, at the inflow, exactly as designed.
+
+Two bugs found on the way, both by measurement:
+
+- **Capacity used the best instantaneous growth *rate***, which is a different
+  quantity from standing stock: a rate goes to zero in polar winter while the
+  stock does not, and capacity collapsed to the floor over half the voyage. It
+  now uses nutrient × iron × a light-and-temperature gate — deliberately the
+  same combination the satellite says correlates at +0.68, because that
+  measurement is the best evidence available for what sets standing stock.
+- **Light was sampled instantaneously**, so any step landing near midnight
+  concluded the ocean could support nothing. Daily mean, cached per simulated
+  day.
+
+Everything else improved as a side effect, which is the sign of a structural
+fix rather than a tuned one:
+
+| | before | after |
+|---|---|---|
+| effective types per panel | 3.87 | **5.15** |
+| distinct dominants | 10 | **12** |
+| small cells present | 55% of days | **78%** |
+| *Trichodesmium* in warm gyres | 1.5% | **6.6%** |
+| seed-to-seed spread on the diatom test | 38–91% | **46–69%** |
+
+That last row is the quiet one. The community now tracks the water instead of
+its own internal cycle, so it is far less sensitive to the seed — which is
+what you would expect if the mechanism is right and not what tuning gives you.
+
+And **looking at the pictures** caught the last one: the tropical gyres had
+filled with *Euphausia*, a Southern Ocean animal, because heterotroph growth
+never read the thermal niche that had been sitting in the trait table all
+along. Only the phototrophs were using it.
 
 ---
 
