@@ -470,6 +470,17 @@ class Environment:
             la, lo = self.where(t_days)
             m = self.ocean.mld(la, lo, t_days)
             if m is not None:
+                # A shelf sea cannot mix deeper than the bottom. The MLD
+                # climatology is an open-ocean product and does not know that,
+                # so on the Patagonian shelf it reports a winter mixed layer of
+                # a hundred metres over water sixty metres deep -- and the
+                # model then applied a deep-mixing light penalty to one of the
+                # most productive stretches of water on the whole track. The
+                # shelf field is already in flash for the iron; this is the
+                # same number used for the thing it is actually diagnostic of.
+                shelf = self.ocean.shelf_km(la, lo)
+                if shelf < 300.0:
+                    m = min(m, 30.0 + 0.24 * shelf)
                 # Clamped to a little beyond the panel's column. Beyond that
                 # the only thing a deeper mixed layer does is saturate the
                 # light-limitation term, which it already has.
@@ -1855,11 +1866,21 @@ class Ecosystem:
             ingested = 0.0
             if a.mode == MIXO:
                 ingested = self._ingest(a, dt)
+                r = mld / Z_MAX
                 mu = (0.62 * mu_max * f_light * f_nut * f_temp
-                      - d[7] - 0.12 * min(1.3, mld / Z_MAX))
+                      - d[7] - 0.11 * r / (0.55 + r))
             else:
+                # Sverdrup: a cell mixed below the critical depth spends most
+                # of its time in the dark, so deep mixing is a loss term. It
+                # SATURATES, though -- once the column is fully mixed, mixing
+                # it harder changes nothing, and the linear form here was still
+                # climbing at 1.3x and taking 0.44/day out of a cell whose
+                # maximum growth was 1.0. That is what emptied the Southern
+                # Ocean, in water the satellite says is among the richest on
+                # the track.
+                r = mld / Z_MAX
                 mu = (mu_max * f_light * f_nut * f_temp
-                      - d[7] - 0.34 * min(1.3, mld / Z_MAX))
+                      - d[7] - 0.30 * r / (0.55 + r))
 
             grow = a.mass * mu * dt
             a.mass = min(2.45, a.mass + grow + ingested * 0.6)

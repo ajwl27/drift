@@ -958,6 +958,7 @@ Each stage ends in something that runs. Nothing is ordered until Stage 3.
 | **4** | ✅ Trait refactor | Trait table + allometry + defence + picoplankton. `tools/check_biogeography.py run 5` is the gate, and it passes. | done |
 | **5** | ✅ New morphologies | Eleven added, roster of 18. Extents measured rather than guessed. All checks pass. | done |
 | **5b** | ✅ Sea routing | `tools/make_landmask.py` + `tools/make_route.py`. Both voyages audit at zero land crossings. Build-time only. | done |
+| **6a** | ✅ External validation | `tools/check_chlorophyll.py`. MODIS chlorophyll along the track. The result is in §10c and it is the most important thing the project has learned. | done |
 | **6** | The tuning pass | Run all 1018 days headless. Contact sheet, one panel per 30 days. Type composition vs. day as CSV. **Compare against MODIS chlorophyll climatology sampled along the track** — the falsifiable check. Then tune. | ~2 sessions |
 | **7** | Port | `Canvas` in C, ST7305 driver, trait table and ocean data as `const` arrays. | the long pole |
 | **8** | Enclosure | SolidWorks, print, finish. | |
@@ -1024,6 +1025,83 @@ Ranked by probability × damage.
    needs 360 kB of PSRAM the Pico 2 does not have. Mitigation: order the panel
    early (Stage 2, not Stage 7) so a sourcing problem surfaces while there is still
    a year of software to write.
+
+---
+
+## 10c. What the satellite said — **the headline result**
+
+`tools/check_chlorophyll.py` compares model biomass against MODIS-Aqua
+chlorophyll along the same track in the same months. It is the only check in
+the project the model cannot influence: everything else asks whether I encoded
+the literature correctly.
+
+The comparison is **rank**, not value — model biomass is in arbitrary units and
+chlorophyll is in mg/m³, and the claim the piece makes is about *ordering*, not
+calibration. Spearman is the statistic for that, and it is invariant under any
+monotone transform, so the visual compression in §1 cannot flatter or damage it.
+
+**The result:**
+
+| | Spearman ρ vs satellite |
+|---|---|
+| deep nitrate × iron | **+0.675** |
+| sea surface temperature | −0.638 |
+| deep nitrate | +0.661 |
+| **model biomass** | **+0.026** |
+| model agent count | +0.070 |
+
+**The ocean data is right and the ecology destroys the signal.** The drivers
+carry a strong, correctly-signed relationship to real chlorophyll; the
+population's response to them carries none.
+
+Three follow-ups narrowed it:
+
+- **It is not noise.** Smoothing model biomass over 30, 50, 90 and 150 days
+  moves ρ from +0.026 to −0.004. There is no signal being averaged out.
+- **It is not the compression.** Spearman is rank-based; a compressive map
+  changes nothing.
+- **The response curve is monotone over most of its range** — binned by driver
+  strength, model biomass climbs 9 → 30 across seven of eight bins. It then
+  collapses to 8 in the top bin, which is cold, deep-mixed, nutrient-rich water.
+
+That last one produced two real fixes, both using data already in flash. **A
+shelf sea cannot mix deeper than the bottom** — the MLD climatology is an
+open-ocean product and reported a hundred-metre winter mixed layer over sixty
+metres of Patagonian shelf, so the model applied a deep-mixing light penalty to
+one of the most productive stretches on the track. And **the Sverdrup term must
+saturate**: once a column is fully mixed, mixing it harder changes nothing, but
+the linear form was still climbing and taking 0.44/day out of a cell whose
+maximum growth was 1.0.
+
+**And the satellite overturned one of my own tests.** The checker asserted "the
+Southern Ocean is not a diatom bloom" over days 180–270. Every sample in that
+window is within **90 km of land** — Drake hugged the coast the whole way down,
+so it is the Patagonian *shelf*, not the open Southern Ocean. Shelf water is
+iron-replete, and MODIS reads **1.7 mg/m³** there on day 180, among the richest
+readings on the whole voyage. The model blooming there is correct; the test was
+wrong. It is now two tests: the shelf should be productive, and the *Pacific
+crossing* — 440 to 750 km offshore, the only genuinely open-ocean stretch of the
+entire track — should not bloom. Both pass.
+
+### But ρ is still only +0.070, and that is the real finding
+
+The fixes above are correct and they barely moved it. Which says the problem is
+not a parameter.
+
+A population with a **memory of weeks to months** — predator–prey cycles, cell
+ages, founder effects, the cap and cull machinery — is being carried through
+water that changes **every day or two**. Whatever the biomass is on a given day,
+it reflects where the community is in its own internal cycle far more than it
+reflects the water it is in. That is a timescale mismatch, and no amount of
+tuning fixes a timescale mismatch.
+
+**Which is exactly what §8c proposes.** The advection idea is no longer a nice
+structural improvement — it is the fix for the headline defect, and the
+independent check says so. It should be Stage 7 and it should be next.
+
+The number to beat is **ρ = +0.070**, against a ceiling of **+0.675** set by the
+drivers themselves. That is now a measurable target rather than a matter of
+taste, which is the best thing this check has given the project.
 
 ---
 

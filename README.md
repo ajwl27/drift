@@ -53,6 +53,7 @@ minutes.
 | `tools/check_biogeography.py` | does the emergent composition match known biogeography? `run 5` to sweep five seeds and find out. |
 | `tools/make_card.py` | the printed card for the box: whole-track chart plus the facts and the caveats. |
 | `tools/make_landmask.py` | Natural Earth land polygons → a 0.1° bitmask, build-time only. |
+| `tools/check_chlorophyll.py` | the one external check: model biomass vs MODIS chlorophyll along the track. |
 | `tools/make_route.py` | audits every leg for land crossings and routes round them. `--check` to report, `--emit` for a new table. |
 | `plan.md` | where this is going. |
 

@@ -67,8 +67,22 @@ TESTS = [
     ("oligotrophic gyres are not diatom water", (600, 680), DIATOMS, "<", 0.40,
      "nutrients near zero: small cells win on affinity and mixotrophs on "
      "being able to eat. A diatom bloom here would be the wrong answer"),
-    ("Southern Ocean is not a diatom bloom", (180, 270), DIATOMS, "<", 0.80,
-     "nitrate is abundant but iron and light are not -- HNLC"),
+    # WAS: "Southern Ocean is not a diatom bloom", days 180-270, diatoms < 80%.
+    # That test was wrong, and the satellite is what proved it. Every sample in
+    # that window is within 90 km of land -- it is the PATAGONIAN SHELF, not the
+    # open Southern Ocean, because Drake hugged the coast the whole way down.
+    # Shelf water is iron-replete, and MODIS reads 1.7 mg/m3 there on day 180,
+    # among the richest readings on the entire track. The model blooming there
+    # is correct. The classic HNLC prediction is simply not testable on this
+    # voyage: the track never goes offshore in the Southern Ocean.
+    ("the Patagonian shelf is productive", (180, 270), DIATOMS, ">", 0.45,
+     "iron-replete shelf water with the nitrate of the Southern Ocean behind "
+     "it -- MODIS reads 1.7 mg/m3 here, and a model that stayed empty would "
+     "be wrong"),
+    ("open-ocean HNLC: no bloom far from land", (600, 660), DIATOMS, "<", 0.45,
+     "441 to 750 km from the nearest coast, so no shelf iron -- and this IS "
+     "testable, because the Pacific crossing is the only genuinely offshore "
+     "stretch of the voyage"),
     ("gyres carry the ornate mixotrophs", (600, 690), MIXOTROPHS, ">", 0.12,
      "the large solitary forms that make an empty gyre worth looking at"),
     ("warm gyres carry the nitrogen fixer", (600, 690), DIAZOTROPHS, ">", 0.010,
