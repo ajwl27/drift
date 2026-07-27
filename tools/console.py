@@ -734,8 +734,14 @@ def run(seed=5, day=420.0):
                                   side.st["dolly"], side.st["chart"],
                                   side.st["key"], GALLERY.fade)
                     if zoom == 3:
-                        dur = cad.globe + cad.dolly + cad.chart
-                        side.map_t = (side.map_t + 1.0 / side.st["fps"]) % dur
+                        # cad.duration(MAP), not globe+dolly+chart. Those
+                        # three were the whole move until the dolly learned to
+                        # come back, and this line kept the old sum -- so the
+                        # console wrapped at the moment the zoom-out should
+                        # have started and cut to the globe instead. The
+                        # shipping path was right; only the preview lied.
+                        side.map_t = ((side.map_t + 1.0 / side.st["fps"])
+                                      % cad.duration(MAP))
                         R = map_radius(side.map_t, cad)
                     else:
                         R = (R_GLOBE, zoom_radius(0.55), R_CHART)[zoom]
