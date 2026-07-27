@@ -130,38 +130,61 @@ KEY_R = {k: min(r, SPEC_HALF / max(EXTENT.get(k, 1.5), 0.5))
 
 BASE_ANG = -0.35           # the angle every specimen was drawn at before
 
+# Beats per second, in ANIMAL time, for the parts that move independently of
+# the whole animal. Krill row their pleopods several times a second whatever
+# else they are doing; the passive flexers are slower because nothing is
+# driving them but the water.
+BEAT_HZ = {KRILL: 5.0, CHAIN: 0.5, CORETHRON: 0.4}
+
+# Which draw functions take a `phase`. An explicit set rather than a
+# try/except on TypeError: catching TypeError around a call that might raise
+# one for a completely different reason would swallow a real bug and then
+# draw the thing twice.
+ANIMATED = (COPEPOD, KRILL, SALP, CHAIN, CORETHRON)
+
 
 def specimen_pose(kind, t):
-    """(angle, forward offset in radii) for a specimen swimming on the spot.
+    """(angle, forward offset in radii, beat phase in radians).
 
     `t` is real seconds. Everything is expressed in ANIMAL time and then
-    slowed by SWIM_SCALE, exactly as the water is, so the plate and the
-    panel behind it are running at the same speed."""
+    slowed by SWIM_SCALE, exactly as the water is, so the plate and the panel
+    behind it run at the same speed.
+
+    The forward offset is deliberately small and always SINUSOIDAL. The first
+    version used the water's impulse-and-decay curve, which is right for a
+    copepod crossing open water and wrong for one in a display case: it darts
+    forward, decays back, and then the cycle restarts, and what that reads as
+    is a teleport. A specimen on a plate has to come back the way it went, so
+    the translation is a gentle sway and the WORK is done by the appendages
+    -- which is also what you would actually see, since a tethered copepod
+    rows its antennae and stays put."""
     slow = SWIM_SCALE
     ta = t * slow                                  # animal seconds
     gait = GAIT.get(kind)
+    beat = BEAT_HZ.get(kind)
+    if beat is not None:
+        ph = 2.0 * math.pi * beat * ta
+    else:
+        ph = 0.0
     if gait == HELIX:
         f = HELIX_HZ[kind]
         yaw = HELIX_YAW[kind]
-        ph = 2.0 * math.pi * f * ta
+        hp = 2.0 * math.pi * f * ta
         # the corkscrew, seen edge-on: a yaw oscillation, and a gentle surge
         # a quarter cycle out of phase so it reads as swimming rather than
         # as a windscreen wiper
-        return BASE_ANG + yaw * math.sin(ph), 0.32 * math.cos(ph)
+        return BASE_ANG + yaw * math.sin(hp), 0.32 * math.cos(hp), hp
     if gait == HOP:
-        period = 1.0 / (HOP_HZ[kind] * slow)
-        coast = COAST_S[kind] / slow
-        ph = (t % period) / max(coast, 1e-3)
-        # impulse then decay: the same shape the water's velocity takes, one
-        # integration further on because here it is displacement being drawn
-        surge = math.exp(-ph) * (1.0 - math.exp(-ph * 6.0))
-        return BASE_ANG - 0.10 * surge, 0.9 * surge - 0.25
+        hp = 2.0 * math.pi * HOP_HZ[kind] * ta
+        # one antennal stroke per hop, and a sway a quarter cycle behind it,
+        # because the body follows the limbs rather than leading them
+        return BASE_ANG, 0.16 * math.sin(hp - 1.4), hp
     if gait == CRUISE:
-        return BASE_ANG + 0.05 * math.sin(2.0 * math.pi * 0.35 * ta), 0.0
+        return BASE_ANG + 0.05 * math.sin(2.0 * math.pi * 0.35 * ta), 0.0, ph
     # not a swimmer: turning in shear, and nothing else. Slow enough that a
     # radiolarian takes most of a minute to show you a new face, which is
     # about right for a thing that has no say in the matter.
-    return BASE_ANG + 2.0 * math.pi * (t % TUMBLE_S) / TUMBLE_S, 0.0
+    return (BASE_ANG + 2.0 * math.pi * (t % TUMBLE_S) / TUMBLE_S, 0.0, ph)
 
 
 def _specimen(c, kind, cx, cy, seed=1, t=0.0):
@@ -171,11 +194,13 @@ def _specimen(c, kind, cx, cy, seed=1, t=0.0):
     rng = random.Random(seed * 7919 + kind)
     g = Genome(kind, rng)
     r = KEY_R.get(kind, 14.0)
-    ang, fwd = specimen_pose(kind, t)
+    ang, fwd, ph = specimen_pose(kind, t)
     dx = fwd * r * math.cos(ang)
     dy = fwd * r * math.sin(ang)
     if kind == COPEPOD:
-        draw_copepod(c, cx + dx, cy + dy, r, ang, g, False)
+        draw_copepod(c, cx + dx, cy + dy, r, ang, g, False, phase=ph)
+    elif kind in ANIMATED:
+        DRAW[kind](c, cx + dx, cy + dy, r, ang, g, phase=ph)
     else:
         DRAW[kind](c, cx + dx, cy + dy, r, ang, g)
 
@@ -300,18 +325,40 @@ def draw_header(c, track, day, y0=8):
 # If the list fits, nothing moves at all. That is the common case in a gyre,
 # and a plate that jiggles when it has no need to would be the worst of both.
 
-PAN_HOLD = 0.22            # fraction of the dwell spent still, at each end
+PAN_HOLD = 0.13            # fraction of the dwell spent still, at each of
+                           # the three rests: top, bottom, top again
 
 
 def _pan(t_into, dwell, span):
     """Pixels to shift the list up, given how far into the plate's dwell we
-    are. Eased, because a linear pan starts and stops with a visible jerk."""
+    are.
+
+    Down, then back up. A one-way pan ends with the list at the bottom and
+    the top of it out of sight, which means the plate spends its last moment
+    showing you the least interesting end and then cuts away -- and the next
+    time it appears it starts from the top again, so the transition is a
+    jump. There and back leaves it where it started, and gives a visitor two
+    passes at a list they may only have half read the first time.
+
+    Three rests: at the top, at the bottom of the travel, and at the top
+    again. Eased at every one of them, because a linear pan starts and stops
+    with a visible jerk and a reversal without a rest reads as a bounce."""
     if span <= 0 or dwell <= 0:
         return 0.0
     f = max(0.0, min(1.0, t_into / dwell))
-    f = (f - PAN_HOLD) / max(1e-6, 1.0 - 2.0 * PAN_HOLD)
-    f = max(0.0, min(1.0, f))
-    return span * f * f * (3.0 - 2.0 * f)
+    leg = (1.0 - 3.0 * PAN_HOLD) / 2.0          # each travel, as a fraction
+    if f < PAN_HOLD:
+        return 0.0
+    if f < PAN_HOLD + leg:
+        u = (f - PAN_HOLD) / leg
+    elif f < 2.0 * PAN_HOLD + leg:
+        return span
+    elif f < 2.0 * PAN_HOLD + 2.0 * leg:
+        u = 1.0 - (f - 2.0 * PAN_HOLD - leg) / leg
+    else:
+        return 0.0
+    u = max(0.0, min(1.0, u))
+    return span * u * u * (3.0 - 2.0 * u)
 
 
 def render_key(canvas, eco, track, day, chrome=True, w=W, h=H,

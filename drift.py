@@ -543,6 +543,46 @@ def label(canvas, x, y, s, scale=None, spacing=1, font=None, pad=3):
     return text(canvas, x, y, s, spacing, scale, font)
 
 
+def trim(s, avail, scale=None, spacing=1, font=None):
+    """As much of `s` as fits, cut at a word boundary if there is one near
+    the end. Truncation is better than overflow and much better than
+    shrinking: a line that runs off the panel loses its last word silently,
+    and a line that shrinks to fit loses all of them."""
+    scale = T_MED if scale is None else scale
+    _, gw, _ = font or FONT7
+    step = (gw + spacing) * scale
+    n = max(0, int((avail + spacing * scale) // step))
+    if n >= len(s):
+        return s
+    cut = s[:n]
+    sp = cut.rfind(" ")
+    return cut[:sp] if sp > n - 5 else cut
+
+
+def wrap(s, avail, scale=None, spacing=1, font=None, maxlines=2):
+    """Break at spaces to fit a column, up to `maxlines`, then trim.
+
+    Trimming alone was not good enough: ANCHORED RIO DE LA PLATA cut to fit
+    reads "ANCHORED RIO DE LA", which is not a shorter version of the truth
+    but a different and meaningless one. Two lines cost fourteen pixels and
+    say the whole thing."""
+    scale = T_MED if scale is None else scale
+    words = s.split()
+    lines, cur = [], ""
+    for wd in words:
+        t = (cur + " " + wd).strip()
+        if cur and text_width(t, spacing, scale, font) > avail:
+            lines.append(cur)
+            cur = wd
+            if len(lines) == maxlines:
+                break
+        else:
+            cur = t
+    if cur and len(lines) < maxlines:
+        lines.append(cur)
+    return [trim(ln, avail, scale, spacing, font) for ln in lines] or [""]
+
+
 def fit_scale(s, avail, spacing=1, font=None, hi=None, lo=1):
     """The largest scale at which `s` fits in `avail` pixels.
 
@@ -1331,9 +1371,15 @@ def draw_pennate(c, cx, cy, r, ang, g):
         c.line(a[0], a[1], b[0], b[1])
 
 
-def draw_chain(c, cx, cy, r, ang, g):
+def draw_chain(c, cx, cy, r, ang, g, phase=0.0):
     """Chaetoceros. Boxy cells in a row with long crossing setae -- the most
-    instantly readable phytoplankton silhouette there is."""
+    instantly readable phytoplankton silhouette there is.
+
+    The setae are silica and the cell has no muscles, so nothing here beats.
+    They flex, a few per cent, the way a thin stiff rod does in moving water,
+    and the tips travel further than the bases. That distinction is the whole
+    point: a diatom that appeared to be swimming would be a lie, and a
+    diatom that is perfectly rigid in water is a different one."""
     n_cells = 3 + int(g.ornament * 3)
     cw = r                       # half-width along the chain
     ch = r * 1.15                # half-height across it
@@ -1354,10 +1400,14 @@ def draw_chain(c, cx, cy, r, ang, g):
         for u, sgn in ((a, -1), (b, -1), (a, 1), (b, 1)):
             pts = []
             L = r * 3.4
+            sway = math.sin(phase + i * 0.5 + (0.0 if sgn > 0 else 1.6)) * 0.16
             for k in range(5):
                 t = k / 4.0
+                # t*t, not t: a cantilever's deflection grows faster than
+                # its length, so the base barely moves and the tip does
                 pts.append(to_world(u + L * t * 0.30 * (1 if sgn > 0 else -1)
-                                    + L * t * g.curl * 0.4,
+                                    + L * t * g.curl * 0.4
+                                    + L * t * t * sway,
                                     sgn * (ch + L * t)))
             c.polyline(pts)
 
@@ -1394,9 +1444,37 @@ def draw_ceratium(c, cx, cy, r, ang, g):
         c.polyline([base, mid, end])
 
 
-def draw_copepod(c, cx, cy, r, ang, g, gravid=False):
-    """The grazer. Prosome, urosome, antennae, caudal setae."""
+# --------------------------------------------------------------------------
+# MOVING PARTS
+# --------------------------------------------------------------------------
+#
+# `phase` is radians of the organism's own beat cycle, and every draw
+# function that has something to beat takes it with a default of zero, so
+# nothing that does not care has to know it exists.
+#
+# It is used on the key plate, where a specimen is drawn at fifteen pixels of
+# radius and is the thing a visitor is staring at, and NOT in the water,
+# where the same animal is nine pixels and an antenna is one. That is not
+# laziness: sub-pixel appendage motion is a way of spending frame time on
+# something nobody can see. If the water ever draws them larger, the argument
+# changes and the parameter is already there.
+#
+# What moves is what actually moves. A copepod's first antennae are the
+# power stroke -- it rows with them -- and the urosome flexes; krill beat
+# five pairs of pleopods in a metachronal wave, back to front; a salp swims
+# by squeezing its whole barrel and jetting the water out. None of this is
+# invented.
+
+
+def draw_copepod(c, cx, cy, r, ang, g, gravid=False, phase=0.0):
+    """The grazer. Prosome, urosome, antennae, caudal setae.
+
+    The antennae row: swept forward on the recovery and back through the
+    power stroke, and the urosome flexes a few degrees against it because
+    the whole animal is one lever."""
     ca = math.cos(ang); sa = math.sin(ang)
+    beat = math.sin(phase)
+    flex = math.sin(phase - 0.6) * 0.10          # urosome lags the stroke
 
     def to_world(u, v):
         return (cx + u * ca - v * sa, cy + u * sa + v * ca)
@@ -1414,24 +1492,30 @@ def draw_copepod(c, cx, cy, r, ang, g, gravid=False):
     c.polyline(left)
     c.polyline(right)
     c.line(left[0][0], left[0][1], right[0][0], right[0][1])
-    # urosome: three tapering segments
+    # urosome: three tapering segments, each one bent a little further off
+    # the axis than the last, so the tail curves rather than hinging
     u = r * 0.40
+    off = 0.0
     for k in range(3):
         wseg = bw * (0.34 - 0.07 * k)
-        a = to_world(u, -wseg); b = to_world(u + r * 0.18, -wseg)
-        d = to_world(u + r * 0.18, wseg); e = to_world(u, wseg)
+        off += flex * r * 0.22
+        a = to_world(u, -wseg + off); b = to_world(u + r * 0.18, -wseg + off)
+        d = to_world(u + r * 0.18, wseg + off); e = to_world(u, wseg + off)
         c.polyline([a, b, d, e])
         u += r * 0.18
     # caudal setae
     for sgn in (-1, 1):
-        s0 = to_world(u, sgn * bw * 0.18)
-        s1 = to_world(u + r * 0.55, sgn * bw * 0.55)
+        s0 = to_world(u, sgn * bw * 0.18 + off)
+        s1 = to_world(u + r * 0.55, sgn * bw * 0.55 + off + flex * r * 0.5)
         c.line(s0[0], s0[1], s1[0], s1[1])
-    # first antennae, swept back
+    # first antennae. Two joints, so the tip travels further than the base
+    # and the limb reads as flexible rather than as a rotating stick.
+    sweep = beat * r * 0.42
+    droop = beat * 0.30
     for sgn in (-1, 1):
         a0 = to_world(-r * 0.62, sgn * bw * 0.35)
-        a1 = to_world(-r * 0.20, sgn * bw * 1.5)
-        a2 = to_world(r * 0.45, sgn * bw * 2.3)
+        a1 = to_world(-r * 0.20 + sweep * 0.45, sgn * bw * (1.5 + droop))
+        a2 = to_world(r * 0.45 + sweep, sgn * bw * (2.3 + droop * 1.8))
         c.polyline([a0, a1, a2])
     if gravid:
         eg = to_world(r * 0.42, bw * 0.9)
@@ -1605,10 +1689,14 @@ def draw_rhizosolenia(c, cx, cy, r, ang, g):
             c.line(p[0], p[1], q[0], q[1])
 
 
-def draw_corethron(c, cx, cy, r, ang, g):
+def draw_corethron(c, cx, cy, r, ang, g, phase=0.0):
     """Two spiky pom-poms joined by a stub. A stubby barrel with a coronet of
     long spines from each end face -- a Southern Ocean diatom, and one of the
-    few things in the set whose silhouette is symmetric about both axes."""
+    few things in the set whose silhouette is symmetric about both axes.
+
+    Passive flex again, and out of phase end to end, because the two coronets
+    are at opposite ends of a rigid box and the water reaches them at
+    different moments."""
     ca = math.cos(ang); sa = math.sin(ang)
 
     def tw(u, v):
@@ -1619,10 +1707,12 @@ def draw_corethron(c, cx, cy, r, ang, g):
     c.polyline([tw(-hl, -hw), tw(hl, -hw), tw(hl, hw), tw(-hl, hw)], close=True)
     n = 5 + int(4 * g.ornament)
     for sgn in (-1, 1):
+        sway = math.sin(phase + (0.0 if sgn > 0 else 1.9)) * r * 0.22
         for i in range(n):
             f = -1.0 + 2.0 * i / (n - 1)
             a = tw(sgn * hl, f * hw)
-            b = tw(sgn * (hl + r * 1.9), f * hw * 1.9 + sgn * r * 0.3 * g.curl)
+            b = tw(sgn * (hl + r * 1.9),
+                   f * hw * 1.9 + sgn * r * 0.3 * g.curl + sway)
             c.line(a[0], a[1], b[0], b[1])
 
 
@@ -1733,9 +1823,14 @@ def draw_trichodesmium(c, cx, cy, r, ang, g):
         c.polyline(pts)
 
 
-def draw_salp(c, cx, cy, r, ang, g):
+def draw_salp(c, cx, cy, r, ang, g, phase=0.0):
     """A chain of hooped barrels. The most distinctive silhouette on the
-    whole list -- nothing else looks remotely like it, at any size."""
+    whole list -- nothing else looks remotely like it, at any size.
+
+    It swims by squeezing. The muscle bands contract, the barrel narrows and
+    lengthens, and the water leaves out of the back -- so the animation here
+    is the body itself rather than anything attached to it, and each zooid
+    in the chain contracts a little after the one in front."""
     ca = math.cos(ang); sa = math.sin(ang)
 
     def tw(u, v):
@@ -1746,22 +1841,34 @@ def draw_salp(c, cx, cy, r, ang, g):
     hw = r * 0.52
     u0 = -(n - 1) * ul
     for i in range(n):
+        # a contraction is quick and the refill is slow, so the waveform is
+        # not a sine: squared-off on the way in, eased on the way out
+        p = (phase - i * 0.7) % (2.0 * math.pi) / (2.0 * math.pi)
+        squeeze = math.exp(-p * 5.0) * 0.30
+        hwi = hw * (1.0 - squeeze)
+        uli = ul * (1.0 + squeeze * 0.35)
         u = u0 + i * 2 * ul
-        c.polyline([tw(u - ul * 0.86, -hw), tw(u + ul * 0.86, -hw)])
-        c.polyline([tw(u - ul * 0.86, hw), tw(u + ul * 0.86, hw)])
+        c.polyline([tw(u - uli * 0.86, -hwi), tw(u + uli * 0.86, -hwi)])
+        c.polyline([tw(u - uli * 0.86, hwi), tw(u + uli * 0.86, hwi)])
         hoops = 3 + int(3 * g.ornament)
         for k in range(hoops):
             t = -0.80 + 1.60 * k / max(1, hoops - 1)
-            p = tw(u + t * ul, -hw)
-            q = tw(u + t * ul, hw)
-            c.line(p[0], p[1], q[0], q[1])
-        e = tw(u + ul * 0.30, hw * 0.35)
+            pp = tw(u + t * uli, -hwi)
+            q = tw(u + t * uli, hwi)
+            c.line(pp[0], pp[1], q[0], q[1])
+        e = tw(u + uli * 0.30, hwi * 0.35)
         c.px(int(e[0]), int(e[1]))
 
 
-def draw_krill(c, cx, cy, r, ang, g):
+def draw_krill(c, cx, cy, r, ang, g, phase=0.0):
     """Segmented rod plus a tail fan, against the copepod's teardrop plus whip
-    antennae. Those two silhouettes are the reason both can be in the set."""
+    antennae. Those two silhouettes are the reason both can be in the set.
+
+    Five pairs of pleopods beating in a metachronal wave -- each pair a
+    little behind the one in front, so the beat travels down the animal
+    instead of all five swinging together. That travelling wave is the
+    single most recognisable thing about a swimming euphausiid, and it costs
+    five short lines."""
     ca = math.cos(ang); sa = math.sin(ang)
 
     def tw(u, v):
@@ -1780,10 +1887,18 @@ def draw_krill(c, cx, cy, r, ang, g):
         b = tw(L * 1.25, sgn * hw * 1.7)
         d = tw(L * 1.15, 0)
         c.polyline([a, b, d])
+    for k in range(5):                         # pleopods, metachronal
+        u = -L * 0.20 + (L * 0.70) * k / 4.0
+        sw = math.sin(phase - k * 0.9)         # each pair lags the one ahead
+        tipu = u + r * 0.30 * sw
+        tipv = hw * (0.95 + 0.55 * abs(math.cos(phase - k * 0.9)))
+        c.line(*(tw(u, hw * 0.85) + tw(tipu, tipv)))
     for sgn in (-1, 1):                        # stalked eyes and antennae
         e = tw(-L * 1.05, sgn * hw * 0.55)
         c.px(int(e[0]), int(e[1]))
-        c.line(*(tw(-L, sgn * hw * 0.4) + tw(-L * 1.7, sgn * hw * 1.0)))
+        trail = math.sin(phase * 0.5) * hw * 0.35
+        c.line(*(tw(-L, sgn * hw * 0.4)
+                 + tw(-L * 1.7, sgn * hw * 1.0 + trail)))
 
 
 DRAW = {
@@ -2798,14 +2913,18 @@ def draw_plate(eco, c, track=None, day=None):
     m = 10
     by = H - 12                                   # the progress bar
     line_h = text_height(T_MED) + 5
-    y = by - 9 - line_h * (2 if pos else 1)
 
+    # STACKED, not shouldered. Status on the left and position on the right
+    # of one line fits "AT SEA" and does not fit "ANCHORED AT CANNON ISLAND",
+    # and what a collision looks like on a 1-bit panel is not a truncation --
+    # it is two strings drawn through each other, which is worse than either.
+    # Two lines cost eighteen pixels of water and cannot collide at all.
+    lines = (wrap(st, W - 2 * m) if st else []) + ([pos] if pos else [])
+    y = by - 10 - line_h * len(lines)
     sc = fit_scale(lab, W - 2 * m)
-    text(c, m, y - text_height(sc) - 5, lab, scale=sc)
-    if st:
-        text(c, m, y, st, scale=T_MED)
-    if pos:
-        text(c, W - m - text_width(pos, scale=T_MED), y, pos, scale=T_MED)
+    label(c, m, y - text_height(sc) - 5, lab, scale=sc)
+    for i, ln in enumerate(lines):
+        label(c, m, y + i * line_h, ln, scale=T_MED)
 
     c.line(m, by, W - m - 1, by)
     x = m + (W - 2 * m - 1) * f

@@ -1152,6 +1152,77 @@ thing bought in this project so far.
 `docs/screens_legible.png` is every screen; `docs/key_pan.png` is the plate at
 four points in its pan.
 
+### The second pass, after looking at it on the panel
+
+**The calibration ruler is fixed at 100 mm.** It used to pick the longest
+round length that fitted the column, which meant the nominal length changed
+as you adjusted the very thing it was calibrating -- you would be chasing a
+moving target, which is exactly the wrong shape for "turn this until it
+measures 100". The window widens to hold the bar instead.
+
+**Captions wrap rather than truncate.** ANCHORED RIO DE LA PLATA cut to fit
+reads "ANCHORED RIO DE LA", which is not a shorter version of the truth but a
+different and meaningless one. Two lines cost fourteen pixels.
+
+**And they stack rather than share a line.** Status left and position right of
+one line fits AT SEA and does not fit ANCHORED AT CANNON ISLAND, and what a
+collision looks like on 1 bit is not a truncation -- it is two strings drawn
+through each other, which is worse than either.
+
+**TRACK INFERRED is gone.** It was an honest confidence flag and it was also
+the only line on the chart that talked about the model rather than the voyage,
+which on a piece meant to be looked at is a footnote read aloud. The
+uncertainty lives in this plan and on the card in the box. The next port now
+reads `NEXT: CHULE 1D` rather than bare `CHULE 1D`.
+
+### The plate goes down and comes back
+
+A one-way pan ends with the list at the bottom and the top of it out of
+sight, so the plate spends its last moment showing the least interesting end
+and then cuts away -- and next time it appears it starts from the top, so the
+transition is a jump. There and back leaves it where it started and gives a
+visitor two passes at a list they may only have half read the first time.
+Three rests: top, bottom, top again. Dwell 40 s -> **90 s**, which is about
+four seconds a row each way. That is 4% of the GALLERY cycle; the water is
+still up for eighteen minutes at a stretch.
+
+### Moving parts, and the copepod that teleported
+
+The first version of the hop gave the copepod the water's own
+impulse-and-decay curve: dart forward, decay back, restart. Right for an
+animal crossing open water and badly wrong for one in a display case, where
+the restart reads as a **teleport**. A specimen on a plate has to come back
+the way it went.
+
+So the translation became a small sinusoid -- continuous by construction, no
+seam to jump at -- and the work moved to the appendages, which is also what
+you would actually see: a copepod holding station rows its antennae and stays
+put.
+
+`phase`, in radians of the organism's own beat, is now an optional argument on
+every draw function that has something to beat. What moves is what actually
+moves:
+
+| | what beats | why |
+|---|---|---|
+| *Calanus* | first antennae, two-jointed; urosome flexes against the stroke | it rows with them; the whole animal is one lever |
+| *Euphausia* | five pairs of pleopods, **metachronal** — each pair lags the one ahead | the travelling wave is the most recognisable thing about a swimming euphausiid, and it costs five short lines |
+| *Salpa* | the barrel itself squeezes and lengthens, each zooid after the one in front | it swims by contracting and jetting; the animation is the body, not something attached to it |
+| *Chaetoceros* | setae flex, tip further than base (`t²`, a cantilever) | silica, no muscles: it is the water moving them |
+| *Corethron* | the two coronets sway out of phase | opposite ends of a rigid box, and the water reaches them at different moments |
+
+The passive flexers are deliberately gentler and slower than the swimmers. A
+diatom that appeared to be swimming would be a lie; a diatom perfectly rigid
+in moving water is a different one.
+
+`phase` is used on the **plate** and not in the water, where the same animal
+is nine pixels across and an antenna is one. That is not laziness — sub-pixel
+appendage motion spends frame time on something nobody can see. The argument
+changes if the water ever draws them larger, and the parameter is already
+there.
+
+`docs/limbs.png` is five species at six points in their cycle.
+
 ---
 
 ## 10k. The hardware — **the Waveshare board, and what it changes**

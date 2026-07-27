@@ -52,16 +52,19 @@ class Cadence:
         return self.globe + self.dolly + self.chart
 
 
-# The key plate got longer when the type got bigger. Fifteen seconds was
-# right for a static list of eleven rows at 5 px; it is not enough to pan a
-# twelve-row list past a window five rows deep and give a visitor time to
-# read any of it. Forty seconds is roughly two seconds a row plus the holds,
-# which is the same reading budget the old plate had -- it just has to be
-# spent sequentially now.
+# The key plate got longer when the type got bigger, and longer again when
+# the pan learned to come back. Fifteen seconds was right for a static list
+# of eleven rows at 5 px. Ninety is two unhurried passes over a twelve-row
+# list through a window five rows deep, plus three rests -- about four
+# seconds a row on the way down and the same on the way up, which is reading
+# pace rather than skimming pace.
+#
+# Ninety seconds is 4% of the GALLERY cycle. The water is still up for
+# eighteen minutes at a stretch, which is the ratio that matters.
 GALLERY = Cadence(water=18 * 60, globe=3.0, dolly=7.0, chart=8.0,
-                  key=40.0, fade=1.5)
+                  key=90.0, fade=1.5)
 EXHIBIT = Cadence(water=20.0, globe=2.0, dolly=5.0, chart=5.0,
-                  key=28.0, fade=1.0)
+                  key=52.0, fade=1.0)
 
 EXHIBIT_LAPSE = 300.0          # seconds before EXHIBIT falls back to GALLERY
 

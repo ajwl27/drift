@@ -78,6 +78,7 @@ PAD = 10
 COL = 450                    # width of the control column, set so a
                              # 100 mm calibration ruler fits at a
                              # typical desktop monitor density
+RULER_MM = 100               # the calibration bar's true length. Fixed.
 COLH = 1000                  # the control column's own height: sliders,
                              # ruler, legend and footer. In true-size mode
                              # the panel is SMALLER than this, so the window
@@ -205,6 +206,10 @@ for _name, _val in vars(drift).items():
     if (isinstance(_val, int) and not isinstance(_val, bool)
             and _name.isupper() and _val in NAMES and _val not in KIND_ID):
         KIND_ID[_val] = _name
+
+
+def ruler_px(ppi):
+    return int(round(ppi / 25.4 * RULER_MM))
 
 
 def defaults():
@@ -359,6 +364,11 @@ def run(seed=5, day=420.0):
     def size(split):
         pw, ph, _ = panel_px()
         w = (2 if split else 1) * (pw + PAD) + PAD + COL + PAD
+        if true_size and live is not None:
+            # the 100 mm bar is drawn from the control column's left edge,
+            # so the window has to be at least that wide from there
+            w = max(w, (2 if split else 1) * (pw + PAD) + PAD
+                    + ruler_px(live.st["ppi"]) + PAD)
         return w, max(ph + FOOT + PAD * 2, COLH)
 
     def win_h():
@@ -604,6 +614,8 @@ def run(seed=5, day=420.0):
                     p = PARAMS[sel]
                     d = 1 if ev.key == pygame.K_RIGHT else -1
                     live.st[p.key] = p.nudge(live.st[p.key], d, stepsz)
+                    if p.key == "ppi" and true_size:
+                        screen = pygame.display.set_mode(size(split))
                     if p.key in DEFERRED:
                         pending = True
                 elif ev.key == pygame.K_BACKSPACE:
@@ -658,6 +670,8 @@ def run(seed=5, day=420.0):
             wpx = COL - PAD - 150 - 74
             f = (pygame.mouse.get_pos()[0] - x0) / float(wpx)
             live.st[dragging.key] = dragging.value(f)
+        if true_size and screen.get_size() != size(split):
+            screen = pygame.display.set_mode(size(split))
 
         # ---- advance and render each side -----------------------------
         R = (R_GLOBE, zoom_radius(0.55), R_CHART)[zoom]
@@ -733,15 +747,13 @@ def run(seed=5, day=420.0):
             # pixels, and neither is safe to assume. Hold a ruler to this bar
             # and adjust the ppi slider until it reads 100 mm; then the panel
             # beside it is the size the object will actually be.
-            # pick the longest round length that still fits the column, so
-            # the ruler stays usable at any monitor density
-            avail = COL - 12
-            mm = 10
-            for cand in (100, 80, 50, 40, 25, 20, 10):
-                if live.st["ppi"] / 25.4 * cand <= avail:
-                    mm = cand
-                    break
-            bar = int(round(live.st["ppi"] / 25.4 * mm))
+            # ALWAYS 100 mm. A ruler whose nominal length changes as you
+            # adjust the thing it is calibrating is not a ruler -- you would
+            # be chasing a moving target, which is exactly the wrong shape
+            # for "turn this until it measures 100". The window widens to
+            # hold the bar instead.
+            mm = RULER_MM
+            bar = ruler_px(live.st["ppi"])
             pygame.draw.line(screen, INK, (x0, ly + 10), (x0 + bar, ly + 10), 2)
             for t in range(11):
                 tx = x0 + int(bar * t / 10.0)

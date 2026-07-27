@@ -12,7 +12,7 @@ import math
 import struct
 
 from drift import (Canvas, W, H, text, text_width, text_height, fit_scale,
-                   label, T_BIG, T_MED)
+                   label, trim, wrap, T_BIG, T_MED)
 from voyage import Camera, Track, fill_radius, span_km
 
 
@@ -198,7 +198,8 @@ def draw_scale(c, cam, w=W, h=H):
     px = cam.R * math.sin(km / 6371.0)
     if px < 12 or px > w - 30:
         return
-    y = h - 44
+    # clear of the two caption lines below it, whichever of them is present
+    y = h - 14 - 3 * (text_height(T_MED) + 5) - 6
     x0 = 10
     c.line(x0, y, x0 + px, y)
     c.line(x0, y - 4, x0, y + 4)
@@ -229,13 +230,20 @@ def draw_caption(c, track, day, w=W, h=H):
     # where to, because a course line with no destination is only half a
     # statement. The confidence flag rides on this line rather than getting
     # its own, since the only positions we are unsure of are ones at sea.
-    st = track.status(day)
+    # Two lines, because one of them is often long and neither may be cut.
+    # "TRACK INFERRED" is gone: it was an honest confidence flag and it was
+    # also the only line on the chart that talked about the model rather than
+    # the voyage, which on a piece meant to be looked at is a footnote read
+    # aloud. The uncertainty is documented in the plan and in the card that
+    # goes in the box; it does not need to be on the panel every ninety
+    # seconds.
+    lines = list(wrap(track.status(day), w - 20))
     if track.anchored(day) is None:
         port, away = track.next_port(day)
-        st = "AT SEA  %s %dD" % (port[:12], int(away))
-        if conf < 1:
-            st = "AT SEA  TRACK INFERRED"
-    label(c, 10, h - 10 - text_height(T_MED), st, scale=T_MED)
+        lines.append(trim("NEXT: %s %dD" % (port, int(away)), w - 20))
+    y = h - 10 - text_height(T_MED) - (len(lines) - 1) * (text_height(T_MED) + 5)
+    for i, ln in enumerate(lines):
+        label(c, 10, y + i * (text_height(T_MED) + 5), ln, scale=T_MED)
 
 
 # North stays up.
