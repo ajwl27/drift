@@ -110,6 +110,37 @@ MCU_IDLE_TUNED_MA = MCU_IDLE_TUNED_5V * MEAS_V / CELL_V
 PANEL_UA_PER_HZ = 23.6
 PANEL_BASE_UA = 15.0
 
+# --------------------------------------------------------------------------
+# BOARDS
+# --------------------------------------------------------------------------
+#
+# Idle current is the number that decides this, and it varies by an order of
+# magnitude between plausible boards. Active current barely matters, because
+# the duty cycle is a few per cent.
+#
+# ESP32-S3, from Espressif: active with RF off measured at 23.9 mA on a
+# WROOM-1 module, light sleep 240 uA, deep sleep 8.1 uA. Light sleep keeps
+# RAM, which is what this piece needs -- deep sleep would lose the ecosystem
+# every frame. 240 uA is TEN TIMES better than the RP2350's light sleep, and
+# it changes the answer more than any amount of frame-rate tuning does.
+#
+# The dev-board figure is the soft one: an ESP32-S3-RLCD-4.2 carries an ES8311
+# codec, an ES7210 ADC, two microphones, an RTC, a humidity sensor and a card
+# slot, none of it obviously power-gated. 8 mA is a guess and wants a meter on
+# it. It is also the number that matters least, because that board will be on
+# USB.
+BOARDS = (
+    ("RP2350, stock Pico 2", 29.7, 2.43),
+    ("ESP32-S3, dev board as bought", 32.3, 8.0),
+    ("ESP32-S3, own PCB, light sleep", 32.3, 0.40),
+    ("ESP32-S3, own PCB, tuned hard", 32.3, 0.15),
+)
+
+# PANELS: (name, width, height). Render cost and panel current both scale
+# with pixel count, to first order.
+PANELS = (("2.7in, 240x400", 240, 400), ("4.2in, 300x400", 300, 400))
+REF_PX = 240 * 400
+
 # CELLS. Capacity is nominal; usable is lower cold and lower after a few
 # hundred cycles, so treat these as optimistic by 10-15%.
 CELLS = (("18650, 3000 mAh", 3000.0),
@@ -123,19 +154,22 @@ CELLS = (("18650, 3000 mAh", 3000.0),
 SELF_DISCHARGE_MA = 0.083
 
 
-def draw(fps, c_factor=1.0, idle=MCU_IDLE_MA):
+def draw(fps, c_factor=1.0, idle=MCU_IDLE_MA, active=None, px=None):
     """(mcu mA, panel mA, duty, frame ms). The MCU is either awake at
-    MCU_ACTIVE_MA or asleep at `idle`, and the whole model is the fraction of
-    the time it spends in each."""
-    frame_ms = (SIM_MS + render_ms()) * c_factor
+    `active` or asleep at `idle`, and the whole model is the fraction of the
+    time it spends in each. Render cost and panel current both scale with
+    pixel count, to first order."""
+    active = MCU_ACTIVE_MA if active is None else active
+    scale = (REF_PX if px is None else px) / REF_PX
+    frame_ms = (SIM_MS + render_ms() * scale) * c_factor
     duty = min(1.0, frame_ms * fps / 1000.0)
-    mcu = duty * MCU_ACTIVE_MA + (1.0 - duty) * idle
-    panel = (PANEL_BASE_UA + PANEL_UA_PER_HZ * fps) / 1000.0
+    mcu = duty * active + (1.0 - duty) * idle
+    panel = (PANEL_BASE_UA + PANEL_UA_PER_HZ * scale * fps) / 1000.0
     return mcu, panel, duty, frame_ms
 
 
-def total(fps, c_factor=1.0, idle=MCU_IDLE_MA):
-    mcu, panel, _, _ = draw(fps, c_factor, idle)
+def total(fps, c_factor=1.0, idle=MCU_IDLE_MA, active=None, px=None):
+    mcu, panel, _, _ = draw(fps, c_factor, idle, active, px)
     return mcu + panel
 
 
@@ -259,7 +293,25 @@ def main():
     print("milliamp total it is a significant fraction, and no design")
     print("gets under it.")
 
-    print("\n=== 6. What this does not model ===\n")
+    print("\n=== 6. Board and panel choice, one 18650 ===\n")
+    print("%-34s %9s %7s %9s %7s"
+          % ("", "10 fps mA", "days", "20 fps mA", "days"))
+    for pname, pw, ph in PANELS:
+        print("  %s   %d px, render x%.2f"
+              % (pname, pw * ph, pw * ph / REF_PX))
+        for bname, act, idle in BOARDS:
+            c = []
+            for fps in (10.0, 20.0):
+                t = total(fps, 1.0, idle, act, pw * ph)
+                c += [t, life_days(t, 3000.0)]
+            print("    %-30s %9.2f %7.0f %9.2f %7.0f"
+                  % (bname, c[0], c[1], c[2], c[3]))
+    print("\nThe MCU's sleep current decides this and nothing else does. An")
+    print("ESP32-S3 in light sleep idles ten times lower than an RP2350, and")
+    print("light sleep keeps RAM -- which this piece needs, because deep")
+    print("sleep would throw the ecosystem away every frame.")
+
+    print("\n=== 7. What this does not model ===\n")
     for line in (
             "Regulator loss. A buck-boost at a 2 mA load runs well off its",
             "  efficiency peak; add 15-25% for anything fed from a cell",

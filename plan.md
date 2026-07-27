@@ -1029,6 +1029,116 @@ Ranked by probability × damage.
 
 ---
 
+## 10k. The hardware — **the Waveshare board, and what it changes**
+
+### Can it run from USB-C? Yes.
+
+Read from the board's own schematic
+(`files.waveshare.com/wiki/ESP32-S3-RLCD-4.2/ESP32-S3-RLCD-4.2-schematic.pdf`),
+because the product page does not say and the question decides the whole
+battery argument:
+
+| | |
+|---|---|
+| **U7** | ETA6098 — a 2.5 A **switching-mode** Li-ion charger, not a linear TP4056 |
+| **D1** | MBR230LSFT1G Schottky, USB reverse protection into the charger input |
+| **L1** | 2.2 µH, 3 A — the charger is a buck, so it has a real output node |
+| **M1** | 8205 dual FET **in series between that node and the 18650 holder** |
+| **U2** | RT9193-33 LDO, input **VSYS**, output VCC3V3 |
+| **Q1 / U3** | AO3401 P-FET load switch with a latch, on the PWR button and a GPIO |
+
+The shape that matters: the buck output is the **system** node, and the cell
+hangs off it through back-to-back FETs. That is a power path. USB-C feeds the
+system and charges the cell at the same time — which is what the CHG LED
+implies and what the topology confirms.
+
+Two caveats worth knowing before ordering:
+
+- **Without a cell fitted**, USB-only operation is *probable* but not proven.
+  A buck charger regulating into an absent battery is chip-dependent, and the
+  ETA6098 datasheet excerpt available does not state a battery-absent mode.
+  Fit the 18650 and the question does not arise.
+- **The load switch is latched and GPIO-controlled**, so plugging USB in may
+  not by itself power the board up from off — expect a press of PWR. Fine for
+  a prototype, and something the custom PCB should deliberately design out:
+  **the shipping object must come up on power alone**, because a gift that
+  needs a button pressed after a power cut is a gift that sits dark.
+
+**So the cell becomes a UPS rather than the power supply.** For a piece
+simulating a continuous three-year voyage that is worth more than the runtime:
+it rides out power cuts, and §11's open question about persisting the ecosystem
+across a power cycle mostly stops being urgent.
+
+### The panel is 300 × 400, and one constant gets nicer
+
+Not 240 × 400. Consequences:
+
+- `W, H = 300, 400`. Aspect goes 0.60 → 0.75, so every layout re-flows: the
+  key plate rows, the HUD block, the progress bar. Nothing structural — the
+  draw functions all take explicit coordinates — but it is an afternoon.
+- **The globe limb radius becomes exactly 250.** `R = √(150² + 200²)` is a
+  3-4-5 triangle scaled by 50, where 240 × 400 gave the awkward 233.238. The
+  one place in this project where a hardware change makes the arithmetic
+  prettier.
+- 25% more pixels: render cost ×1.25, panel current ×1.25 (≈29.5 µA/Hz).
+
+### Check which driver it actually is
+
+Waveshare's page and its own resources folder say **ST7305**. Zephyr's board
+port says **ST7306**. The ST7305 datasheet is titled *"264H × 320V"*, which
+cannot address 300 × 400 — so Zephyr is probably right and Waveshare's
+documentation is reusing the family name. It matters for Stage 8, since the
+driver is the part being written by hand. Resolve it on the bench.
+
+### ESP32-S3 versus RP2350, and it is not close
+
+| | active (RF off) | sleep, RAM retained |
+|---|---|---|
+| RP2350 / Pico 2 | ~22 mA @ 5 V | **1.8 mA** |
+| ESP32-S3 | 23.9 mA measured | **240 µA** |
+
+Light sleep is what this piece needs — deep sleep loses RAM, and losing RAM
+means losing the ecosystem every frame. **The ESP32-S3 idles ten times
+lower**, and since §10j established that the sleep floor is the whole ball
+game, that single figure is worth more than every frame-rate decision
+combined.
+
+One 18650, 300 × 400 panel:
+
+| | 10 fps | 20 fps |
+|---|---|---|
+| RP2350, stock Pico 2 | 32 d | 23 d |
+| ESP32-S3 dev board as bought | 13 d | 12 d |
+| ESP32-S3, own PCB, light sleep | **60 d** | **34 d** |
+| ESP32-S3, own PCB, tuned hard | 68 d | 36 d |
+
+The dev board is the worst of the three because it carries an ES8311 codec, an
+ES7210 ADC, two microphones, an RTC, a humidity sensor and a card slot, none
+of it obviously power-gated — the 8 mA idle there is a guess and wants a meter
+on it. It also does not matter, because that board will be on USB.
+
+### What the custom PCB should drop, and keep
+
+**Drop:** ES8311, ES7210, both microphones, the speaker header, the TF slot,
+the humidity sensor. None of them appear anywhere in this piece, and on the
+dev board they are most of the idle current.
+
+**Keep:** the PCF85063 RTC and its backup cell. The voyage is a function of
+absolute time; an RTC that survives a power cut is what makes the piece resume
+its voyage rather than restart it, and it costs about 0.2 µA.
+
+**Add:** power-on-by-power-applied rather than by button; a USB-C socket
+placed where it can be hidden; and the 18650 as a hold-up cell rather than the
+supply.
+
+**Watch:** the ESP32-S3-WROOM-1-N16R8 has 8 MB octal PSRAM and the RLCD
+examples require it for the frame buffer. 300 × 400 at 1 bit is 15 kB packed,
+so the buffer itself is nothing; but if the vendor driver keeps a byte-per-pixel
+shadow that is 120 kB, which still fits in 512 kB SRAM. `Canvas` is
+byte-per-pixel today and would want packing on the way to C either way.
+
+---
+
 ## 10j. Frame rate against battery life — **numbers, and which of them is soft**
 
 `tools/power.py`, rewritten with measured frame costs and sourced hardware
