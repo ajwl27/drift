@@ -188,8 +188,8 @@ PARAMS = [
     # crosses the panel in 195 hours; 3000 crosses it in about a minute.
     # Literal ship-speed advection would be 5,845 px/s -- see the note on
     # DRIFT_SCALE in drift.py for why that is not an option.
-    Param("drift", "water past", 1.0, 20000.0, drift.DRIFT_SCALE, log=True,
-          fmt="%.0f", unit="x", group="WATER"),
+    Param("drift", "water past", 1.0, 100000.0, drift.DRIFT_SCALE, log=True,
+          fmt="%.0f", unit="x", group="WATER"),   # shown as a crossing time
     Param("fps", "frame rate", 0.25, 51.0, float(drift.TARGET_FPS), log=True,
           fmt="%.2f", unit=" fps", group="PANEL"),
     # 1.0 is the piece's real setting: one second per second, the whole
@@ -823,8 +823,19 @@ def run(seed=5, day=420.0):
             screen.blit(font.render(p.label, True, INK if on else (70, 76, 84)),
                         (rx, y))
             v = live.st[p.key]
-            lab = TCOMP_NAME.get(v, p.text(v)) if p.key == "tcomp" \
-                else p.text(v)
+            if p.key == "tcomp":
+                lab = TCOMP_NAME.get(v, p.text(v))
+            elif p.key == "drift":
+                # the consequence, not the multiplier. "40000x" means nothing;
+                # "panel in 43 s" is the thing being chosen. Calibrated
+                # against a measured drift of 6.93 px/s at 40,000x, which
+                # implies an effective shear of 0.40 over the drawn depths.
+                cross = 300.0 * 86400.0 / (drift.U_RESID * 0.40 * max(v, 1e-6))
+                lab = ("%.0f s" % cross if cross < 90 else
+                       "%.0f min" % (cross / 60) if cross < 5400 else
+                       "%.0f h" % (cross / 3600))
+            else:
+                lab = p.text(v)
             t = font.render(lab, True, HOT if on else INK)
             screen.blit(t, (rx + SUBCOL - 8 - t.get_width(), y))
             bx, bw = rx + 130, SUBCOL - 130 - 84

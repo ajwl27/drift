@@ -94,10 +94,16 @@ MAX_ZOO = 7                # grazers entirely during a bloom
 # inherit the velocity of the thing it was taken from.
 #
 # So DRIFT_SCALE spans the usable ground between those two, and the top of
-# its range is set by what can be watched rather than by what is true: at
-# about 3,000 the water crosses the panel in a minute, which is brisk and
-# still legible. Tunable in tools/console.py, and it is a judgement about
-# looking, like SWIM_SCALE and TARGET_FPS.
+# its range is set by what can be watched rather than by what is true.
+#
+# It multiplies the steady RESIDUAL and not the tide, because the residual is
+# the ship's passage through the water and the tide is the water's own
+# business. Scaling both made a control whose effect depended on when you
+# dragged it -- the M2 tide passes through zero twice a day, and twenty
+# thousand times nothing is nothing.
+#
+# Tunable in tools/console.py, and it is a judgement about looking, like
+# SWIM_SCALE and TARGET_FPS.
 DRIFT_SCALE = 1.0
 
 IMMIGRATION = 0.35         # background arrivals per day even at anchor: the
@@ -836,7 +842,17 @@ class Environment:
         spring_neap = 0.62 + 0.38 * math.cos(2 * math.pi * (t_days - 2.0) / 14.765)
         tide = U_TIDE * spring_neap * math.sin(2 * math.pi * t_days / T_M2)
         shear = 0.30 + 0.70 * math.exp(-z / SHEAR_Z)
-        return (tide + U_RESID) * shear * (1.0 + 0.5 * self.storm) * DRIFT_SCALE
+        # DRIFT_SCALE multiplies the RESIDUAL only, not the tide.
+        #
+        # Scaling the whole thing was the first attempt and it made a slider
+        # whose effect depended on when you happened to drag it: the M2 tide
+        # swings +/-150 px/day through zero twice a day, so at the wrong
+        # moment 20,000x of nothing is still nothing. The residual is the
+        # steady term -- it is the ship's passage through the water, which is
+        # what this control is actually about -- and multiplying that gives a
+        # flow that is there whenever you look, with the tide still riding on
+        # top of it at its own amplitude.
+        return (tide + U_RESID * DRIFT_SCALE) * shear * (1.0 + 0.5 * self.storm)
 
     def temperature(self, t_days, z):
         if self.ocean is not None:
@@ -2374,6 +2390,31 @@ class Ecosystem:
             self.nit[i] += (rate * Y_NIT - LOSS_NIT * self.nit[i]) * dt
             self.nit[i] = max(0.004, min(1.2, self.nit[i]))
 
+    def _drift(self, dt):
+        """The water goes past, and EVERYTHING IN IT GOES TOGETHER.
+
+        This lives here, on the per-frame path, rather than in step() where
+        it started. In step() it ran once per simulated hour, so the whole
+        assemblage sat still for an hour and then jumped -- which at
+        DRIFT_SCALE = 1 is a jump of one and a half pixels nobody could see,
+        and at 20,000 is a reshuffle nobody could follow. Either way the
+        slider appeared to do nothing, which is exactly what was reported.
+
+        Advection is a rendering behaviour on the same footing as swimming:
+        it has to happen at frame rate or it does not happen at all."""
+        env = self.env
+        t = self.t + self._acc
+        zpx = (H - TOP_M - BOT_M) / Z_MAX
+        for a in self.agents:
+            a.x = (a.x + env.current(t, a.z) * dt) % W
+        for d in self.det:
+            d.x = (d.x + env.current(t, d.z) * dt) % W
+        for s in self.snow:
+            # snow rides a little slower: it is small, and a body of water
+            # that all moved at exactly one speed would read as a slide
+            s[0] = (s[0] + env.current(t, max(0.0, (s[1] - TOP_M) / zpx))
+                    * dt * 0.7) % W
+
     def _swim(self, dt):
         """Move the motile ones at their own speed, and turn them to face it.
 
@@ -2636,6 +2677,7 @@ class Ecosystem:
                 self.step(chunk, swim=False)
             self._acc = 0.0
         self._swim(dt_days)
+        self._drift(dt_days)
         if self.real_t >= self._restock_at:
             self._restock_at = self.real_t + self.RESTOCK_S
             self._restock()
@@ -2691,8 +2733,9 @@ class Ecosystem:
             self._swim(dt)
 
         # ---- advection and fade, common to everything --------------------
+        if swim:
+            self._drift(dt)          # standalone step(): carry the water too
         for a in self.agents:
-            a.x += env.current(t, a.z) * dt
             turb = mixing * (1.0 if a.z < mld else 0.35)
             a.x += rng.gauss(0, 26.0 * turb) * dt
             a.z += rng.gauss(0, 30.0 * turb) * dt
@@ -2867,11 +2910,10 @@ class Ecosystem:
         # last decided the water was carrying, not a number of its own
         self._nz_target_seen = nz
 
-        # ---- marine snow ---------------------------------------------------
+        # ---- marine snow: sinking only; the sideways part is in _drift ----
         zpx = (H - TOP_M - BOT_M) / Z_MAX
         for s in self.snow:
             s[1] += (16.0 + 30.0 * s[2]) * dt
-            s[0] = (s[0] + env.current(t, max(0.0, (s[1] - TOP_M) / zpx)) * dt * 0.7) % W
             if s[1] > H:
                 s[1] = -2.0
                 s[0] = rng.uniform(0, W)
