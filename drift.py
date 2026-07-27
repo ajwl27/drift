@@ -53,11 +53,13 @@ import sys
 # 1. CONFIG
 # --------------------------------------------------------------------------
 
-W, H = 240, 400            # panel resolution, portrait. Sharp 2.7" rotated.
-PANEL_DIAG_IN = 2.7        # the physical panel, for true-size preview only.
-                           # A 4.2in 300x400 RLCD would be (300, 400, 4.2),
-                           # and note the pleasing accident: the globe limb
-                           # radius sqrt(150^2+200^2) is then exactly 250.
+W, H = 300, 400            # panel resolution, portrait. The 4.2in RLCD on
+                           # the ESP32-S3-RLCD-4.2, which is the panel this
+                           # is now built for. It was 240 x 400 (a 2.7in
+                           # Sharp) and the change is worth the note: the
+                           # globe limb radius sqrt(150^2+200^2) is now
+                           # exactly 250, where 240 x 400 gave 233.238.
+PANEL_DIAG_IN = 4.2        # the physical panel, for true-size preview only
 SCALE = 2                  # preview upscale. May be fractional -- see
                            # tools/console.py, which computes the value that
                            # puts the panel on a monitor at its true physical

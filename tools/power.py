@@ -138,8 +138,13 @@ BOARDS = (
 
 # PANELS: (name, width, height). Render cost and panel current both scale
 # with pixel count, to first order.
+#
+# REF_PX is the panel the frame costs above were MEASURED on, and must not
+# move when the design does. DEFAULT_PX is the panel actually being built
+# for, which is now the 4.2in 300x400 on the ESP32-S3-RLCD-4.2.
 PANELS = (("2.7in, 240x400", 240, 400), ("4.2in, 300x400", 300, 400))
 REF_PX = 240 * 400
+DEFAULT_PX = 300 * 400
 
 # CELLS. Capacity is nominal; usable is lower cold and lower after a few
 # hundred cycles, so treat these as optimistic by 10-15%.
@@ -160,7 +165,7 @@ def draw(fps, c_factor=1.0, idle=MCU_IDLE_MA, active=None, px=None):
     time it spends in each. Render cost and panel current both scale with
     pixel count, to first order."""
     active = MCU_ACTIVE_MA if active is None else active
-    scale = (REF_PX if px is None else px) / REF_PX
+    scale = (DEFAULT_PX if px is None else px) / REF_PX
     frame_ms = (SIM_MS + render_ms() * scale) * c_factor
     duty = min(1.0, frame_ms * fps / 1000.0)
     mcu = duty * active + (1.0 - duty) * idle
@@ -193,6 +198,10 @@ def main():
     print("Frame: sim %.2f + render %.2f (cadence-weighted) = %.2f ms in "
           "CPython\n" % (SIM_MS, render_ms(), SIM_MS + render_ms()))
 
+    print("Panel: %d x %d, the 4.2in RLCD. Frame costs were measured on the"
+          % (300, 400))
+    print("240 x 400 and scaled by pixel count, which is x%.2f.\n"
+          % (DEFAULT_PX / REF_PX))
     print("=== 1. Frame rate against battery life, one 18650 (3000 mAh) ===\n")
     print("%-20s %7s %8s %9s %9s %7s %14s  %s"
           % ("", "duty", "MCU mA", "panel mA", "total mA", "days",

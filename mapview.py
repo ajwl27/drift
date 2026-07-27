@@ -272,7 +272,12 @@ def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):
 # ever on screen while moving through it, so the panel is never sitting
 # there wasting a third of itself.
 
-R_GLOBE = 118.0                   # whole hemisphere inside the 240 width
+R_GLOBE = W / 2.0 - 2.0           # whole hemisphere inside the frame width,
+                                  # with two pixels of air so the limb is not
+                                  # cut by the edge. Derived rather than
+                                  # written down, because the panel changed
+                                  # once and this was the only constant that
+                                  # did not follow it.
 R_FILL = fill_radius(W, H)        # 233.2: limb exactly clears the corners
 R_CHART = 1400.0                  # ~900 km across the frame
 

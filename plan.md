@@ -1069,9 +1069,15 @@ simulating a continuous three-year voyage that is worth more than the runtime:
 it rides out power cuts, and §11's open question about persisting the ecosystem
 across a power cycle mostly stops being urgent.
 
-### The panel is 300 × 400, and one constant gets nicer
+### The panel is 300 × 400, and one constant gets nicer — **done**
 
-Not 240 × 400. Consequences:
+`W, H = 300, 400`, `PANEL_DIAG_IN = 4.2`, and the whole piece is now built for
+the 4.2in RLCD. `docs/panel_300x400.png` is all five screens after the change.
+Only one constant did not follow the panel: `R_GLOBE` was written down as
+118.0 for the old width, and is now derived as `W / 2 - 2` so it cannot be
+left behind again.
+
+Consequences:
 
 - `W, H = 300, 400`. Aspect goes 0.60 → 0.75, so every layout re-flows: the
   key plate rows, the HUD block, the progress bar. Nothing structural — the
@@ -1329,8 +1335,8 @@ For reference, at 108.8 ppi:
 
 | panel | physical | on this monitor | SCALE |
 |---|---|---|---|
-| 240x400 at 2.7in | 35 x 59 mm | 151 x 252 px | 0.6297 |
-| 300x400 at 4.2in | 64 x 85 mm | 274 x 366 px | 0.9138 |
+| 240x400 at 2.7in (was) | 35 x 59 mm | 151 x 252 px | 0.6297 |
+| **300x400 at 4.2in (now)** | **64 x 85 mm** | **274 x 366 px** | **0.9138** |
 
 **Export.** `e` writes a paste-ready block to `docs/tuned_values.txt` — the
 scalars as scalars, and the gait multipliers already folded into the
