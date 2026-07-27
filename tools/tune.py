@@ -4,12 +4,16 @@ The development build. Never ships, never ports.
 
     python3 tools/tune.py            # swimming speed, four side by side
     python3 tools/tune.py fps        # frame rate, four side by side
+    python3 tools/tune.py turn       # how much they wander, four side by side
 
-Two of the numbers in this project cannot be reasoned to. Swimming speed is
+Three of the numbers in this project cannot be reasoned to. Swimming speed is
 derived from real body lengths per second, which fixes the *ratios* between
 organisms but leaves one global multiplier that is purely a judgement about
-how a moving thing looks. Frame rate is the same. Both have to be set by eye,
-and this is the eye.
+how a moving thing looks. Frame rate is the same. So is TURN_SCALE, which sets
+how far a path wanders in a minute: the literature fixes the decorrelation
+times, and slow motion fixes how they scale, but whether the result reads as
+drifting or as marching is a question only an eye can settle. All three have
+to be set by looking, and this is the looking.
 
 The important design decision here is FOUR AT ONCE. Tuning a single panel up
 and down means comparing what is on the screen against your memory of what was
@@ -21,7 +25,7 @@ immediate and the choice takes about four seconds.
 Keys:
     left / right    shift the whole range of values being compared
     up / down       spread or tighten the range
-    1 2 3 4         choose a panel; writes the value and prints it
+    1 2 3 4         choose a panel; prints the value to paste into drift.py
     space           pause
     r               reseed
     esc             quit
@@ -33,8 +37,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import drift                                             # noqa: E402
-from drift import (Canvas, W, H, Ecosystem, View, render, text,  # noqa: E402
-                   SWIM_SCALE, TARGET_FPS)
+from drift import (Canvas, W, H, Ecosystem, View, render,        # noqa: E402
+                   SWIM_SCALE, TARGET_FPS, TURN_SCALE)
 from voyage import Track                                 # noqa: E402
 from ocean import Ocean                                  # noqa: E402
 
@@ -43,15 +47,15 @@ GAP = 6
 START_DAY = 420.0          # the Humboldt: busy enough to judge motion by
 
 
-def _fleet(seed, day, track, ocean, scales):
+def _fleet(seed, day, track, ocean, scales, field="swim_scale"):
     """N ecosystems from the same seed, run to the same day, differing only
-    in swimming speed. Same seed matters more than it looks: the organisms
+    in one attribute. Same seed matters more than it looks: the organisms
     are then in the same places with the same genomes, so the only thing your
     eye can be responding to is the motion."""
     out = []
     for sc in scales:
         e = Ecosystem(seed=seed, start_day=0.0, track=track, ocean=ocean)
-        e.swim_scale = sc
+        setattr(e, field, sc)
         out.append(e)
     print("spinning up %d ecosystems to day %.0f ..." % (len(out), day))
     while out[0].t < day:
@@ -70,11 +74,13 @@ def run(mode="swim", seed=5):
 
     track = Track("drake")
     ocean = Ocean("data/ocean.bin")
-    centre = SWIM_SCALE if mode == "swim" else float(TARGET_FPS)
+    centre = {"swim": SWIM_SCALE, "turn": TURN_SCALE,
+              "fps": float(TARGET_FPS)}[mode]
     spread = 2.6
+    field = {"swim": "swim_scale", "turn": "turn_scale"}.get(mode, "swim_scale")
 
     def values():
-        if mode == "swim":
+        if mode in ("swim", "turn"):
             return [centre * spread ** ((i - (N - 1) / 2.0) / (N - 1) * 2)
                     for i in range(N)]
         base = (4, 8, 12, 16, 20, 25, 30, 40, 51)
@@ -84,7 +90,7 @@ def run(mode="swim", seed=5):
 
     vals = values()
     ecos = _fleet(seed, START_DAY, track, ocean,
-                  vals if mode == "swim" else [SWIM_SCALE] * N)
+                  vals if mode != "fps" else [SWIM_SCALE] * N, field)
 
     pygame.init()
     SC = 2
@@ -123,22 +129,23 @@ def run(mode="swim", seed=5):
                 elif e.key == pygame.K_r:
                     seed += 1
                     ecos = _fleet(seed, START_DAY, track, ocean,
-                                  vals if mode == "swim" else [SWIM_SCALE] * N)
+                                  vals if mode != "fps" else [SWIM_SCALE] * N,
+                                  field)
                 elif e.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
                     k = e.key - pygame.K_1
                     if k < N:
                         chosen = vals[k]
-                        if mode == "swim":
-                            print("\nSWIM_SCALE = %.4f" % chosen)
-                        else:
+                        if mode == "fps":
                             print("\nTARGET_FPS = %d" % int(chosen))
+                        else:
+                            print("\n%s = %.4f" % (field.upper(), chosen))
                         print("   paste that into drift.py")
                 if e.key in (pygame.K_LEFT, pygame.K_RIGHT,
                              pygame.K_UP, pygame.K_DOWN):
                     vals = values()
-                    if mode == "swim":
+                    if mode != "fps":
                         for e2, v in zip(ecos, vals):
-                            e2.swim_scale = v
+                            setattr(e2, field, v)
 
         if not paused:
             for e2 in ecos:
@@ -150,7 +157,7 @@ def run(mode="swim", seed=5):
         for i in range(N):
             # in fps mode each panel redraws at its own rate and holds
             # between, which is exactly what a slower panel would look like
-            hold = 1 if mode == "swim" else max(1, int(round(60.0 / vals[i])))
+            hold = max(1, int(round(60.0 / vals[i]))) if mode == "fps" else 1
             if frame % hold == 0 or frame == 1:
                 render(ecos[i], canvases[i], view)
             arr = np.frombuffer(bytes(canvases[i].buf),
@@ -159,7 +166,7 @@ def run(mode="swim", seed=5):
             x = GAP + i * (W * SC + GAP)
             pygame.transform.scale(surf, (W * SC, H * SC),
                                    screen.subsurface((x, GAP, W * SC, H * SC)))
-            lab = ("%.3f" % vals[i]) if mode == "swim" else ("%d fps" % vals[i])
+            lab = ("%d fps" % vals[i]) if mode == "fps" else ("%.3f" % vals[i])
             img = font.render("%d)  %s" % (i + 1, lab), True, (30, 30, 30))
             screen.blit(img, (x, GAP + H * SC + 4))
         pygame.display.flip()

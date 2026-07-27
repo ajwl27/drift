@@ -673,9 +673,66 @@ SWIM_SCALE = 0.22          # global damper, set by eye: the fastest thing
 # horizontal displacement it produces is not something any equation reads.
 TURN_TAU = {               # seconds before a heading decorrelates. Ciliates
     FLAGELLATE: 3.0, TINTINNID: 4.0, CERATIUM: 12.0, ORNITHO: 14.0,
-    COPEPOD: 9.0, KRILL: 14.0, SALP: 25.0,
-}                          # spiral tightly; a salp holds a course.
+    COPEPOD: 9.0, KRILL: 40.0, SALP: 25.0,
+}                          # spiral tightly; a salp holds a course, and krill
+                           # school, which is the straightest thing out there.
 TUMBLE_S = 90.0            # seconds for a non-swimmer to turn once in shear
+
+# SWIM_SCALE IS A SLOW-MOTION FACTOR, AND IT HAS TO APPLY TO THE CLOCK.
+#
+# This was got wrong first time and the error was visible from across the room
+# before it was visible in any number: cells jittered, changing direction far
+# more than a thing moving that slowly should. The reason is that the original
+# code slowed the translation by SWIM_SCALE and left TURN_TAU alone, so the
+# organism turned at full rate while travelling at a fifth of it. Per body
+# length swum it therefore turned 1/SWIM_SCALE times as often as the real
+# animal -- about four and a half times -- and a path that crumpled is exactly
+# what "moving more than its swim speed" looks like.
+#
+# The fix is to treat SWIM_SCALE as what it actually is. Showing something in
+# slow motion means dividing every velocity by the factor AND multiplying every
+# duration by it. Then the path through the water is the real animal's path,
+# shape for shape, merely traversed slowly -- which is the only version of this
+# that can claim the literature values still mean anything.
+#
+# The seam, stated rather than hidden: this applies to self-propelled motion
+# only. Sinking, tumbling in shear and the tidal drift are the water's doing,
+# not the organism's, and their rate is already set by the time compression.
+# So TUMBLE_S is not scaled and a diatom keeps turning at its own pace.
+
+# Gaits. Real plankton do not swim by rotational diffusion; that was a
+# convenient abstraction and it looks like one. Each group has a characteristic
+# temporal signature, all of it long-documented, and none of it is white noise:
+HELIX, HOP, CRUISE = 0, 1, 2
+GAIT = {
+    FLAGELLATE: HELIX,     # flagellar beat is asymmetric, so the cell corkscrews
+    TINTINNID: HELIX,      # ciliates likewise, and faster
+    CERATIUM: HELIX,       # dinoflagellates: slow, steady, unmistakable spiral
+    ORNITHO: HELIX,
+    COPEPOD: HOP,          # hop-and-sink: a burst of a few body lengths, then
+    SALP: HOP,             # nothing. Salps do the same by jet, more slowly.
+    KRILL: CRUISE,         # continuous pleopod beating, and they school
+}
+# Helix: cycles per second and yaw half-angle in radians, in ANIMAL time.
+HELIX_HZ = {FLAGELLATE: 1.2, TINTINNID: 0.9, CERATIUM: 0.40, ORNITHO: 0.32}
+HELIX_YAW = {FLAGELLATE: 0.40, TINTINNID: 0.34, CERATIUM: 0.24, ORNITHO: 0.20}
+# Hop: bursts per second, and the seconds a burst takes to bleed away against
+# drag. A copepod's coast is short because at its Reynolds number the water is
+# treacle; a salp is bigger, faster and glides.
+HOP_HZ = {COPEPOD: 2.0, SALP: 1.0}
+COAST_S = {COPEPOD: 0.10, SALP: 0.50}
+# Seconds for the body axis to swing round to a new intended heading. A cell
+# steers, it does not teleport, and this is also what stops the heading noise
+# from reaching the drawing: it is a first-order low-pass, so the body follows
+# the part of the wander that is real turning and ignores the part that is the
+# model's own white noise. In PANEL time -- it is a drawing rate, not biology.
+BODY_TAU = 0.30
+# A multiplier on every TURN_TAU, and the one lever for "how much do they
+# wander". Left at 1.0 the paths are the real animals' paths; the scaling
+# above already fixed the crumpling, and this exists because how much
+# meandering looks alive on a panel is another judgement by eye, tuned with
+# tools/tune.py turn rather than argued for.
+TURN_SCALE = 1.0
 
 # Per-grazer housekeeping. Which of them migrate vertically, how efficiently
 # each converts what it eats, and how many of each the panel will carry.
@@ -1559,17 +1616,25 @@ DRAW = {
 # 5. ECOSYSTEM  -  NPZ dynamics carried by individual agents
 # --------------------------------------------------------------------------
 
+def _wrap_pi(d):
+    """Shortest signed angle. Steering toward a heading without this turns
+    the long way round about half the time."""
+    return (d + math.pi) % (2.0 * math.pi) - math.pi
+
+
 class Agent:
-    __slots__ = ("g", "x", "z", "ang", "spin", "mass", "age", "vigour",
-                 "gravid", "flash", "vis", "doomed", "mode", "head")
+    __slots__ = ("g", "x", "z", "ang", "body", "phase", "vel", "mass", "age",
+                 "vigour", "gravid", "flash", "vis", "doomed", "mode", "head")
 
     def __init__(self, g, x, z, mass, rng, vis=0.02):
         self.g = g
         self.x = x
         self.z = z
-        self.ang = rng.uniform(0, 2 * math.pi)
-        self.head = rng.uniform(0, 2 * math.pi)
-        self.spin = rng.gauss(0, 0.25)
+        self.head = rng.uniform(0, 2 * math.pi)   # where it means to go
+        self.body = self.head                     # where it is actually pointing
+        self.ang = self.body + math.pi            # what gets drawn
+        self.phase = rng.uniform(0, 10.0)         # gait clock, so they are not
+        self.vel = 0.0                            # in step with one another
         self.mass = mass
         self.age = 0.0
         self.vigour = 1.0
@@ -1639,6 +1704,7 @@ class Ecosystem:
         # way to compare them honestly -- sequentially you are comparing the
         # second one against your memory of the first
         self.swim_scale = SWIM_SCALE
+        self.turn_scale = TURN_SCALE
         self.snow = [[r.uniform(0, W), r.uniform(0, H),
                       r.uniform(0.6, 2.4), r.random() < 0.30]
                      for _ in range(SNOW_COUNT)]
@@ -1935,31 +2001,82 @@ class Ecosystem:
         rng = self.rng
         dt_s = dt * 86400.0 / max(1.0, self.time_compression)
         zpx = (H - TOP_M - BOT_M) / Z_MAX
+        slow = max(1e-3, self.swim_scale)     # the slow-motion factor
+        body_k = 1.0 - math.exp(-dt_s / BODY_TAU)
         for a in self.agents:
             k = a.g.kind
             bl = SWIM_BL.get(k)
             if bl is None:
-                # not a swimmer: tumbling in shear, and nothing else
+                # not a swimmer: tumbling in shear, and nothing else. Not
+                # slowed -- the shear is the water's, and see the note on
+                # SWIM_SCALE above.
                 a.ang += rng.gauss(0.0, 1.0) * math.sqrt(
                     min(dt_s, 4.0 * TUMBLE_S)) * (2.0 * math.pi / TUMBLE_S) * 0.35
                 continue
-            v = bl * 2.0 * visual_radius(a) * self.swim_scale  # px per second
-            tau = TURN_TAU.get(k, 10.0)
-            if dt_s < tau:
-                a.head += rng.gauss(0.0, math.sqrt(dt_s / tau))
-                dx = v * dt_s * math.cos(a.head)
-                dz = v * dt_s * math.sin(a.head)
-            else:
-                step = v * math.sqrt(tau * dt_s)              # D = v^2 tau
+            v0 = bl * 2.0 * visual_radius(a) * slow       # px per second
+            tau = TURN_TAU.get(k, 10.0) / slow * self.turn_scale
+            if dt_s >= tau:
+                # Far past the decorrelation time: one step is a whole random
+                # walk, no gait is visible, and only the diffusivity has to be
+                # right. D = v^2 * tau, and note that the two scalings cancel
+                # here -- v0^2 * tau goes as slow^2 / slow, so a day a second
+                # still mixes at very nearly the rate it always did.
+                step = v0 * math.sqrt(tau * dt_s)
                 a.head = rng.uniform(0.0, 2.0 * math.pi)
-                dx = rng.gauss(0.0, step) * 0.7071
-                dz = rng.gauss(0.0, step) * 0.7071
-            a.x += dx
+                # keep the body with the heading here, or the first frame
+                # after the speed control comes back down from 1 DAY/SEC is a
+                # whole population snapping through a large angle at once --
+                # measured at 138 degrees in one frame before this line
+                a.body = a.head
+                a.ang = a.head + math.pi
+                a.x += rng.gauss(0.0, step) * 0.7071
+                a.z += rng.gauss(0.0, step) * 0.7071 * 0.25 / zpx
+                continue
+
+            # --- the intended course wanders, slowly ---------------------
+            a.head += rng.gauss(0.0, math.sqrt(dt_s / tau))
+            a.phase += dt_s * slow                        # gait clock, animal time
+            gait = GAIT.get(k, CRUISE)
+
+            # --- the gait modulates course, speed, or both ----------------
+            if gait == HELIX:
+                # A helix seen edge-on is a sinusoid, and the panel is a flat
+                # section through the water, so this IS the projection rather
+                # than an impression of one. Path speed is unchanged; what
+                # drops is headway, by about a tenth, which is the real cost
+                # of corkscrewing and not a fudge.
+                course = a.head + HELIX_YAW[k] * math.sin(
+                    2.0 * math.pi * HELIX_HZ[k] * a.phase)
+                v = v0
+            elif gait == HOP:
+                # Impulse against drag, fired as a Poisson process: velocity
+                # decays with COAST_S and each burst adds to it. Mean speed
+                # works out at impulse * rate * coast, so setting the impulse
+                # from that identity keeps the average exactly v0 however the
+                # burst statistics are tuned. Real hops are not metronomic,
+                # which is why this is Poisson and not a sawtooth.
+                rate = HOP_HZ[k] * slow                   # bursts per panel second
+                coast = COAST_S[k] / slow
+                a.vel *= math.exp(-dt_s / coast)
+                if rng.random() < 1.0 - math.exp(-rate * dt_s):
+                    a.vel += v0 / (rate * coast)
+                course = a.head
+                v = a.vel
+            else:                                          # CRUISE
+                course = a.head
+                v = v0
+
+            # --- the body swings round to the course at a finite rate -----
+            # and the drawing follows the body, not the intention. This is
+            # the whole of the anti-jitter fix: white noise in `head` never
+            # reaches the screen, because a first-order lag cannot pass it.
+            a.body += _wrap_pi(course - a.body) * body_k
+            a.x += v * dt_s * math.cos(a.body)
             # vertical swimming is damped: the diel migration and the sinking
             # terms own the depth axis, and a copepod that could cross fifty
             # metres in a minute would make nonsense of both
-            a.z += dz * 0.25 / zpx
-            a.ang = a.head + math.pi          # the drawings face -u
+            a.z += v * dt_s * math.sin(a.body) * 0.25 / zpx
+            a.ang = a.body + math.pi          # the drawings face -u
 
     def _step_pico(self, dt, surface, chl, t):
         """Picoplankton, as a scalar field. Monod on the same nitrogen the

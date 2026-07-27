@@ -1029,7 +1029,158 @@ Ranked by probability × damage.
 
 ---
 
-## 10g. The two numbers that cannot be reasoned to — **the development build**
+## 10h. The jitter — **and it was a units bug, not a taste problem**
+
+The observation, from across the room: *the cells jitter, changing direction a
+lot, which makes them appear to be moving a lot more than their swim speed
+alone.* Measured before anything was changed, with `tools/check_motion.py`:
+
+| | drawn-body rotation per frame | path / net travel |
+|---|---|---|
+| *Micromonas* | **7.4°** | 1.65 |
+| *Calanus* | 4.3° | 1.36 |
+| *Ceratium* | 3.7° | 1.48 |
+| *Ornithocercus* | 3.4° | **2.02** |
+| *Euphausia* | 3.4° | 1.65 |
+| *Salpa* | 2.6° | 1.01 |
+
+At 20 fps, 7.4° per frame is **148° of body rotation per second** on a drawing
+six pixels wide. The observation was not a matter of taste. It was a
+measurement, made by eye, of something real.
+
+### The cause
+
+`SWIM_SCALE` divided every velocity. It did not multiply any duration. So the
+organism translated at a fifth of its speed and turned at full rate, and per
+body length swum it therefore turned `1/SWIM_SCALE` times as often as the real
+animal — about four and a half times. Its path through the water was four and a
+half times more crumpled than the animal's.
+
+Which is exactly the observation, stated in the model's own terms: the rotation
+was running at real time while the translation was in slow motion. Anything
+"moving more than its swim speed" is, definitionally, motion that is not
+translation.
+
+The fix is one symbol. Slow motion means dividing every velocity by the factor
+**and multiplying every duration by it**:
+
+```python
+v0 = bl * 2.0 * visual_radius(a) * slow       # px per second
+tau = TURN_TAU.get(k, 10.0) / slow            # ... and the clock too
+```
+
+Then the path through the water is the real animal's path, shape for shape,
+merely traversed slowly — which is the only version of this in which the
+literature values still mean anything at all.
+
+The seam, stated rather than hidden: this applies to self-propelled motion only.
+Sinking, tumbling in shear and the tidal drift are the water's doing, not the
+organism's, and their rate is set by the time compression. So `TUMBLE_S` is not
+scaled and a diatom keeps turning at its own pace.
+
+### The second cause, which was cosmetic and just as visible
+
+The drawn body angle was assigned straight from the instantaneous heading:
+
+```python
+a.ang = a.head + math.pi
+```
+
+`head` is a random walk. Random walks have white increments — energy at every
+frequency, including every frequency above the one at which rotation stops
+reading as heading and starts reading as vibration. Worse, that high-frequency
+component contributes almost nothing to where the cell actually goes: it
+integrates away. The eye was seeing the whole spectrum and the trajectory was
+responding only to the bottom of it. **Rotation with no travel attached is the
+precise mechanical definition of "looks busier than it is."**
+
+So the body now has its own angle, and steers toward the intended course at a
+finite rate — a first-order lag, `BODY_TAU = 0.30 s`, which is both what a real
+cell's turning is limited by and, conveniently, a low-pass filter. The model's
+own white noise cannot reach the screen. Travel follows the body, not the
+intention, so it cannot reach the trajectory either.
+
+### The third thing, which was an opportunity rather than a bug
+
+Rotational diffusion is a convenient abstraction, and it looks like one. Real
+plankton have characteristic gaits, all long-documented, none of them white
+noise. Now implemented:
+
+- **Helix** — *Micromonas*, tintinnids, *Ceratium*, *Ornithocercus*. The
+  flagellar beat is asymmetric, so the cell corkscrews. A helix seen edge-on is
+  a sinusoid, and the panel is a flat section through the water, so this is the
+  projection rather than an impression of one. Path speed unchanged; headway
+  drops about a tenth, which is the real cost of corkscrewing.
+- **Hop-and-sink** — *Calanus*, and salps by jet at a quarter the rate. Impulse
+  against drag, fired as a Poisson process, velocity decaying with `COAST_S`.
+  Mean speed is `impulse × rate × coast`, so setting the impulse from that
+  identity keeps the average exactly right however the burst statistics are
+  tuned. A copepod now darts about a body length and settles, roughly every two
+  seconds. Real hops are not metronomic, which is why this is Poisson and not a
+  sawtooth.
+- **Cruise** — krill. Continuous pleopod beating, and they school, so `TURN_TAU`
+  went from 14 s to 40 s. Krill are the straightest thing out there.
+
+Every gait frequency is quoted in **animal** seconds and converted, so the whole
+gait is in slow motion consistently — a 2 Hz hop becomes 0.44 Hz on the panel.
+
+### After
+
+| | rotation per frame | path / net |
+|---|---|---|
+| *Micromonas* | 7.4° → **1.4°** | |
+| tintinnid | — → 1.3° | 1.48 → 1.31 |
+| *Euphausia* | 3.4° → **0.3°** | 1.65 → 1.00 |
+| *Ceratium* | 3.7° → 0.6° | 1.48 → 1.01 |
+| *Ornithocercus* | 3.4° → 0.6° | **2.02 → 1.00** |
+| *Calanus* | 4.3° → 0.6° | 1.36 → 1.02 |
+| *Salpa* | 2.6° → 0.4° | 1.01 → 1.00 |
+
+A five-fold reduction in shimmer, everything now under the 3°/frame threshold,
+and mean speed in body lengths per second unchanged — which matters, because
+that is the number tied to the literature and to the `SWIM_SCALE` tuning.
+
+`docs/gaits.png` is the picture: sixty seconds of swimming with nothing else
+acting, before and after, three individuals each.
+
+### What the fixing turned up
+
+- **A 138° snap.** The diffusive branch — taken at 1 DAY/SEC — reassigned
+  `head` but not `body`, so the first frame after the speed control came back
+  down was the entire population slewing through a large angle at once. Measured
+  at 138° in one frame. One line.
+- **The measurement was wrong twice before it was right.** Tortuosity computed
+  on the horizontal axis alone reports exactly 1.00 for everything, because a
+  1-D projection of a curved path only doubles back when the heading crosses the
+  vertical. And the panel is a cylinder, so a cell crossing the seam reads as
+  239 px of travel in one frame — which inflated speed and tortuosity for
+  precisely the fastest organisms, i.e. the ones under investigation.
+- **A frame-rate test that measured the test.** Path length sampled ten times a
+  second chords across the bends and reads shorter than the same path sampled
+  forty times, so a perfectly rate-independent model looks like it speeds up.
+  Net displacement has no such artefact. On net displacement the three rates
+  agree to a few per cent, and the largest residual falls on the organism whose
+  heading decorrelates fastest — i.e. it is the estimator's variance, not the
+  step size.
+- **`visual_radius` scales with the fade-in.** A cell still fading in swims at a
+  fraction of its own speed, which is right on the panel and useless in a
+  comparison. `tools/plot_gaits.py` now only traces individuals at `vis > 0.9`.
+
+### The new lever
+
+`TURN_SCALE`, a multiplier on every `TURN_TAU`, default 1.0. At 1.0 the paths
+are the real animals' paths and they are *straight* — over a minute, most of
+them barely deviate, because a minute of panel time is only thirteen seconds of
+animal time. Whether that reads as drifting or as marching is the same class of
+question as `SWIM_SCALE` and `TARGET_FPS`, so it is settled the same way:
+
+    python3 tools/tune.py turn
+
+which is why §10g says three numbers now rather than two.
+
+---
+
+## 10g. The numbers that cannot be reasoned to — **the development build**
 
 Almost everything in this piece was argued from a source. Growth rates come from
 Edwards 2012, the temperature envelope from Eppley, predator:prey ratios from
@@ -1037,7 +1188,7 @@ Hansen 1994, swimming speeds in body lengths per second from the swimming
 literature. That is a good way to build most of it, and it is why the model
 survived contact with a satellite.
 
-Two numbers are not like that.
+Three numbers are not like that.
 
 **`SWIM_SCALE`** is the single global multiplier on all motion. The literature
 fixes the *ratios* — a flagellate at 14 BL/s really is fourteen times as busy as
@@ -1049,7 +1200,11 @@ There is only what looks like drifting rather than skittering.
 **`TARGET_FPS`** is the same kind of number. The power model says what each
 rate costs; it cannot say which one reads as *alive*.
 
-So both are set by eye — but by eye done properly.
+**`TURN_SCALE`** is the third, added after §10h. The literature fixes the
+decorrelation times and the slow-motion scaling fixes how they translate to the
+panel; neither settles whether the result reads as drifting or as marching.
+
+So all three are set by eye — but by eye done properly.
 
 ### Why four at once
 
@@ -1067,6 +1222,7 @@ minutes, and it is a real comparison rather than a comparison against a memory.
 
     python3 tools/tune.py            # swimming speed
     python3 tools/tune.py fps        # frame rate
+    python3 tools/tune.py turn       # how far the paths wander
 
     left/right   shift the whole range      up/down   spread or tighten it
     1 2 3 4      choose a panel; prints the value to paste into drift.py
@@ -1084,10 +1240,11 @@ away from the machine, and for arguing about later.
 This is a development build. It never ships and it never ports. Putting live
 tuning keys into `preview()` — which was the first attempt — would have meant
 carrying comparison scaffolding into the file that becomes C, and `drift.py`'s
-one job is to be portable. The whole cost of keeping it separate is two lines in
-`drift.py`: `TARGET_FPS` as a named constant, and `swim_scale` promoted from a
-module constant to a per-instance attribute so four ecosystems can differ inside
-one process. Both are things the shipping file wanted anyway.
+one job is to be portable. The whole cost of keeping it separate is three lines in
+`drift.py`: `TARGET_FPS` and `TURN_SCALE` as named constants, and `swim_scale`
+and `turn_scale` promoted from module constants to per-instance attributes so
+four ecosystems can differ inside one process. All of it the shipping file
+wanted anyway.
 
 The spin-up in `tune.py` steps at `1/6` day rather than the simulation's usual
 `1/24`. Four ecosystems reach day 420 in 17 seconds instead of 64. This is a
