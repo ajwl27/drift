@@ -1290,6 +1290,36 @@ GREEN ALGA rather than PICOPLANKTON, because picoplankton is a *size* class
 and the size is already on the same line, so it would have been the only
 entry in the table that told you nothing new.
 
+**The clamp now measures instead of guessing.** A photograph of the panel
+showed the copepod's antenna touching the C of CALANUS. Traced exactly: the
+antenna tip reaches 1.5 radii, the sway carries the whole organism another
+0.48, and the total landed at x = 52.8 against a text column at 52. It
+overlapped by less than a pixel, which is why it took a photograph to find.
+
+Two errors, and the second is the interesting one. The clamp reserved nothing
+for the **sway** -- it sized the specimen from its static silhouette and then
+the animation moved the whole thing half a radius further. And it clamped
+against `EXTENT`, which is the *ecosystem's* separation radius: isotropic by
+design and describing a different thing entirely. For the copepod it read 1.8
+radii where the drawing reaches 1.5, so it was too tight; for *Globigerina* it
+read 2.8 where the drawing reaches **3.54**, so that one had been overflowing
+its column all along and nobody had noticed. Wrong in both directions.
+
+So each species is now **drawn once at import**, through a full turn of its
+own animation, into a scratch canvas, and the furthest lit pixel from the
+centre is its reach. That is not an estimate of the silhouette, it is the
+silhouette. 68 ms at import; on the MCU the same measurement runs at build
+time and what ships is a table of eighteen numbers.
+
+`SWAY_HEADROOM = 0.5` radii is reserved on top, and `_specimen` saturates the
+sway at that figure rather than letting it grow -- the console's slider goes
+to 4x and the column does not.
+
+The gutter went from 2 px to 6. Six is enough *because* the reach is measured:
+the old gutter did not fail for being narrow, it failed because the number it
+was measured against was wrong, and a gutter sized to absorb an unknown error
+is just a wider unknown.
+
 **And the abundance figure went.** "1.4" means 1.4 times the scarcest any
 organism ever gets anywhere on the voyage -- a real quantity, an honest one,
 and completely opaque at a glance. The bar with its decade ticks says the same

@@ -65,6 +65,10 @@ NAMES = {
 # the piece exists -- a line of prose underneath it is a second-hand account
 # of something the viewer is already looking at.
 #
+# The unit closes up to the number -- 2-5MM, not 2-5 MM. It buys the one
+# character that lets every line fit at reading size, and it groups the
+# quantity with its unit, which stops the eye parsing "MM COPEPOD".
+#
 # Sizes are hand-written LENGTH ranges rather than the model's equivalent
 # spherical diameters, because ESD is a modelling convenience and a viewer
 # holding a ruler to a krill is measuring its length. This is the one thing a
@@ -73,12 +77,12 @@ NAMES = {
 # and is also, unavoidably, a lie about scale. The caption is where that lie
 # gets corrected, and correcting it is enough work for one line.
 SIZES = {
-    FLAGELLATE: "1-3 UM", COCCO: "5-10 UM", THALASSIO: "10-30 UM",
-    CHAIN: "10-50 UM", PENNATE: "20-60 UM", CORETHRON: "50-100 UM",
-    ORNITHO: "50-120 UM", TINTINNID: "50-200 UM", CENTRIC: "50-500 UM",
-    CERATIUM: "0.1-0.5 MM", RHIZO: "0.2-1 MM", RADIOLARIAN: "0.1-2 MM",
-    ACANTHARIA: "0.1-1 MM", FORAM: "0.3-1 MM", TRICHO: "1-3 MM",
-    COPEPOD: "2-5 MM", KRILL: "1-6 CM", SALP: "1-10 CM",
+    FLAGELLATE: "1-3UM", COCCO: "5-10UM", THALASSIO: "10-30UM",
+    CHAIN: "10-50UM", PENNATE: "20-60UM", CORETHRON: "50-100UM",
+    ORNITHO: "50-120UM", TINTINNID: "50-200UM", CENTRIC: "50-500UM",
+    CERATIUM: "0.1-0.5MM", RHIZO: "0.2-1MM", RADIOLARIAN: "0.1-2MM",
+    ACANTHARIA: "0.1-1MM", FORAM: "0.3-1MM", TRICHO: "1-3MM",
+    COPEPOD: "2-5MM", KRILL: "1-6CM", SALP: "1-10CM",
 }
 
 # Group words, all twelve characters or fewer so that "size GROUP" fits the
@@ -99,14 +103,29 @@ GROUPS = {
 
 ROW_H = 64           # name, size and class, bar
 SPEC_X = 26          # centre of the specimen column
-TEXT_X = 52          # set by the longest lines: COSCINODISCUS is thirteen
-                     # characters at T_BIG and 0.1-2 MM RADIOLARIAN is twenty
-                     # at T_MED, and W - 10 - 52 = 238 holds both with nothing
-                     # to spare. The column is set by the type, not the other
-                     # way round, and every pixel not needed by the type goes
-                     # to the specimen.
+TEXT_X = 56          # set by the longest name: COSCINODISCUS is thirteen
+                     # characters, which at T_BIG is exactly W - 10 - 56.
+                     # The column is set by the type, not the other way
+                     # round, and what the type does not need goes to the
+                     # specimen and to the gutter between them.
 SPEC_HALF = 24       # nothing in the specimen column may reach further than
-                     # this from its centre, or it climbs into the name
+                     # this from its centre. 26 + 24 = 50 against a text
+                     # column starting at 56, so six clear pixels.
+                     #
+                     # Six is enough BECAUSE the reach is now measured rather
+                     # than inferred. The old two-pixel gutter did not fail
+                     # for being narrow, it failed because the number it was
+                     # measured against was wrong -- and a gutter sized to
+                     # absorb an unknown error is just a wider unknown.
+SWAY_HEADROOM = 0.50 # radii of fore-and-aft sway reserved in the clamp.
+                     # This is the term the first version missed. KEY_R was
+                     # clamped against EXTENT, which is the STATIC reach, and
+                     # then the sway moved the whole organism up to half a
+                     # radius further on top of it. Measured on the copepod:
+                     # antenna tip 1.5 radii out, plus 0.48 of sway, landing
+                     # at x = 52.8 against a text column at 52. It touched,
+                     # and it touched by less than a pixel, which is why it
+                     # took a photograph to find.
 # No right-hand number. The bar carries the abundance and the figure beside
 # it was answering a question nobody had: "1.4" is 1.4 times the scarcest any
 # organism ever gets anywhere on the voyage, which is a real quantity, an
@@ -120,12 +139,22 @@ SPEC_HALF = 24       # nothing in the specimen column may reach further than
 # describe a Chaetoceros chain, which is compact across its axis and up to
 # twelve radii long down it. A plate key is a composed object; composing it
 # by hand is the honest way to do it.
-# Hand-set, then clamped. The hand-set value is the one that makes a row
-# look right; the clamp is what stops a Chaetoceros chain -- eight radii long
-# and compact across -- from lying across the species name. EXTENT is the
-# separation radius and is deliberately isotropic, so it overstates the
-# round ones and understates nothing, which makes it the safe thing to clamp
-# against.
+# Hand-set, then clamped to what actually fits. The hand-set value is the one
+# that makes a row look right; the clamp is what stops a Chaetoceros chain --
+# eight radii long and compact across -- from lying across the species name.
+#
+# THE CLAMP MEASURES RATHER THAN GUESSES. The first version clamped against
+# EXTENT, which is the ecosystem's separation radius: isotropic by design,
+# and describing a different thing entirely. For the copepod it read 1.8
+# radii where the drawing reaches 1.5, so it was too tight; for a Chaetoceros
+# chain it reads 8.4 where the drawing reaches rather more. Wrong in both
+# directions, and neither error visible until something touched the type.
+#
+# So each species is drawn once at import, through a full turn of its own
+# animation, into a scratch canvas -- and the furthest lit pixel from the
+# centre is its reach. That is not an estimate of the silhouette, it is the
+# silhouette. On the MCU the same measurement runs at build time and what
+# ships is a table of eighteen numbers.
 _KEY_R_WANT = {
     RADIOLARIAN: 13.0, CENTRIC: 15.0, PENNATE: 16.0, CHAIN: 5.2,
     CERATIUM: 12.0, COPEPOD: 15.0, TINTINNID: 13.0,
@@ -133,8 +162,6 @@ _KEY_R_WANT = {
     CORETHRON: 9.0, ACANTHARIA: 15.0, FORAM: 10.5, ORNITHO: 13.0,
     TRICHO: 9.0, SALP: 5.8, KRILL: 9.5,
 }
-KEY_R = {k: min(r, SPEC_HALF / max(EXTENT.get(k, 1.5), 0.5))
-         for k, r in _KEY_R_WANT.items()}
 
 # --------------------------------------------------------------------------
 # the specimens swim
@@ -289,6 +316,10 @@ def _specimen(c, kind, cx, cy, seed=1, t=0.0):
     g = Genome(kind, rng)
     r = KEY_R.get(kind, 14.0)
     ang, fwd, ph = specimen_pose(kind, t)
+    # saturate rather than collide: the sway slider goes to 4x in the console
+    # and the column does not, so past the reserved headroom the motion stops
+    # growing instead of climbing into the name
+    fwd = max(-SWAY_HEADROOM, min(SWAY_HEADROOM, fwd))
     dx = fwd * r * math.cos(ang)
     dy = fwd * r * math.sin(ang)
     if kind == COPEPOD:
@@ -298,6 +329,36 @@ def _specimen(c, kind, cx, cy, seed=1, t=0.0):
     else:
         DRAW[kind](c, cx + dx, cy + dy, r, ang, g)
 
+
+def _measure_reach(kind, r=10.0, phases=8, pad=110):
+    """How far the drawing actually goes, in radii, over its whole cycle."""
+    c = Canvas(2 * pad, 2 * pad)
+    g = Genome(kind, random.Random(7919 + kind))
+    for i in range(phases):
+        a = BASE_ANG + 2.0 * math.pi * i / phases
+        ph = 2.0 * math.pi * i / phases
+        if kind == COPEPOD:
+            draw_copepod(c, pad, pad, r, a, g, False, phase=ph)
+        elif kind in ANIMATED:
+            DRAW[kind](c, pad, pad, r, a, g, phase=ph)
+        else:
+            DRAW[kind](c, pad, pad, r, a, g)
+    buf = c.buf
+    far = 0.0
+    for y in range(2 * pad):
+        row = y * 2 * pad
+        dy = y - pad
+        for x in range(2 * pad):
+            if buf[row + x]:
+                d = (x - pad) ** 2 + dy * dy
+                if d > far:
+                    far = d
+    return math.sqrt(far) / r
+
+
+REACH = {k: _measure_reach(k) for k in _KEY_R_WANT}
+KEY_R = {k: min(r, SPEC_HALF / max(REACH[k] + SWAY_HEADROOM, 0.5))
+         for k, r in _KEY_R_WANT.items()}
 
 # --------------------------------------------------------------------------
 # abundance, on one absolute scale
