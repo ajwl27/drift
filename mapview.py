@@ -270,13 +270,18 @@ NORTH_UP = True
 
 
 def chrome_alpha(R):
-    """How solidly the writing is drawn at this zoom.
+    """How solidly the PLACE NAMES are drawn at this zoom.
 
-    Nothing on the globe, fully on by a third of the way in. The words arrive
-    through the ordered dither as the camera moves, so the chart resolves
-    into being labelled rather than having a caption dropped on it -- and the
-    opening three seconds of Earth stay clean, which is the whole reason for
-    opening on it."""
+    Nothing on the globe, fully on by a third of the way in. The names arrive
+    through the ordered dither as the camera moves, so the chart resolves into
+    being labelled rather than having a legend dropped on it.
+
+    This governs the names and nothing else. The day, the position, the status
+    and the scale bar are drawn solid at every zoom: they answer "where is the
+    ship and how far through is this" and that question is exactly as live on
+    the globe as it is at chart scale. It was briefly applied to those too,
+    which made the opening shot beautifully clean and also made it say
+    nothing."""
     f = (math.log(max(R, 1.0)) - math.log(R_GLOBE)) / \
         (math.log(R_CHART) - math.log(R_GLOBE))
     return max(0.0, min(1.0, (f - 0.05) / 0.28))
@@ -366,13 +371,12 @@ def render_map(canvas, coast, track, day, R, chrome=True, w=W, h=H):
     coast.draw(canvas, cam, w, h)
     draw_limb(canvas, cam, w, h)
     draw_track(canvas, track, cam, day, w, h)
-    a = chrome_alpha(R)
     if chrome:
-        draw_places(canvas, cam, track, day, R, w, h, a)
+        draw_places(canvas, cam, track, day, R, w, h, chrome_alpha(R))
     draw_ship(canvas, cam, w, h)
-    if chrome and a > 0.02:
-        draw_scale(canvas, cam, w, h, a)
-        draw_caption(canvas, track, day, w, h, a)
+    if chrome:
+        draw_scale(canvas, cam, w, h)
+        draw_caption(canvas, track, day, w, h)
     return cam
 
 
