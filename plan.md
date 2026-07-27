@@ -1029,6 +1029,76 @@ Ranked by probability × damage.
 
 ---
 
+## 10e. Motion, and why the panel was still
+
+Two things you noticed, both real, and both measurable before they were
+fixable.
+
+### At 1 sec/sec nothing moved, and you were right
+
+Measured: the tidal current at 5 m is **0.0003 px/s**, the turbulent jitter the
+same, and an organism took **twenty-five days to rotate once**. A cell moved
+one pixel per hour. The panel was not slow, it was stopped.
+
+And the numbers are *correct in metres*. A *Calanus* cruising at a few mm/s,
+on a panel where 1 px is 15 cm of real depth, genuinely does move a pixel an
+hour. The problem is that the panel **already magnifies size by about a
+hundred thousand and does not magnify the depth axis at all** — it is
+inconsistent by construction, and the only question is which scale the motion
+should follow.
+
+**It should follow the drawing.** A copepod rendered twenty pixels long that
+moves a pixel an hour is inconsistent with its own picture, and the picture is
+what the eye reads. So swimming speed is expressed in **body lengths per
+second** — the one number that survives the magnification — and multiplied by
+the drawn size:
+
+| | body lengths/s | px/s | crosses the panel in |
+|---|---|---|---|
+| tintinnid | 8.0 | 21.7 | 11 s |
+| krill | 3.0 | 6.7 | 36 s |
+| copepod | 1.1 | 4.8 | 50 s |
+| *Ceratium* | 2.0 | 3.5 | 69 s |
+| salp | 0.6 | 1.2 | 197 s |
+| diatoms, rhizarians | — | — | they do not swim |
+
+The values are real, and the ordering is the interesting part: **ciliates are
+the fastest things in the sea relative to their size**, dinoflagellates next,
+and a copepod cruises at about a body length a second (it darts at a hundred,
+but only for a tenth of a second at a time).
+
+The implementation detail that matters: swimming is **ballistic below the
+heading decorrelation time and diffusive above it**. That is not fussiness. The
+speed control spans six orders of magnitude, and one piece of code has to be
+right at both ends — at real time you watch a copepod swim; at a day a second
+the same call must become a random walk with the correct diffusivity
+`D = v²τ`, or the displacement per step diverges.
+
+Motile organisms now also **face where they are going**, which replaced a
+random spin and is both more correct and much more legible.
+
+### The bunching at the sides
+
+Measured at day 5: **56% of the population in 17% of the width**, and the
+middle nearly empty.
+
+Arrivals were spawning within five pixels of x=0 or x=W, on the reasoning that
+water flows in from one side. That was defensible when immigration was one
+cell a day. Advection made it twenty or thirty, and with a residual drift of
+38 px/day against a residence half-life of 1.3 days, cells were carried out
+again long before they reached the middle.
+
+The edge model was wrong anyway. **The panel is a vertical slice and the ship
+moves through it, not along it**, so new water fills the whole slice rather
+than entering from one side. Arrivals are now uniform across the field, and
+the distribution is flat.
+
+Neither change moved ρ (+0.527) or any biogeography check, which is the point:
+they are about how the water is *sampled and drawn*, not about what lives in
+it.
+
+---
+
 ## 10d. Advection — **built, and it worked**
 
 Your idea, promoted from §8c to Stage 7 because the satellite check said it was

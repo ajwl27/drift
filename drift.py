@@ -627,6 +627,39 @@ HET_KINDS = (COPEPOD, TINTINNID, SALP, KRILL)
 DIAZOTROPHS = (TRICHO,)
 DIAZO_T_MIN = 20.0         # Breitbarth et al. 2007: fixation stops below this
 DIAZO_FE_COST = 25.0
+
+
+# --- swimming ------------------------------------------------------------
+#
+# At one simulated second per real second the panel was completely still: the
+# tidal current is 0.0003 px/s, the turbulent jitter the same, and an organism
+# took twenty-five days to rotate once. Which is correct in metres and wrong
+# on the panel -- because the panel already magnifies SIZE by about a hundred
+# thousand and does not magnify the depth axis at all. It is inconsistent by
+# construction, and the question is only which scale the motion should follow.
+#
+# It should follow the drawing. A copepod rendered twenty pixels long that
+# moves a pixel an hour is inconsistent with its own picture, and the eye
+# reads the picture. So swimming speed is expressed in BODY LENGTHS per
+# second -- which is the one number that survives the magnification -- and
+# multiplied by the drawn size.
+#
+# Values are real. Ciliates are the fastest things in the sea relative to
+# their size; dinoflagellates are next; copepods cruise at about a body
+# length a second and dart at a hundred; diatoms and rhizarians do not swim at
+# all and only sink and tumble.
+SWIM_BL = {
+    FLAGELLATE: 14.0, TINTINNID: 8.0, KRILL: 3.0, CERATIUM: 2.0,
+    ORNITHO: 1.6, COPEPOD: 1.1, SALP: 0.6,
+}
+SWIM_SCALE = 0.22          # global damper, set by eye: the fastest thing
+                           # crosses the panel in about ten seconds
+TURN_TAU = {               # seconds before a heading decorrelates. Ciliates
+    FLAGELLATE: 3.0, TINTINNID: 4.0, CERATIUM: 12.0, ORNITHO: 14.0,
+    COPEPOD: 9.0, KRILL: 14.0, SALP: 25.0,
+}                          # spiral tightly; a salp holds a course.
+TUMBLE_S = 90.0            # seconds for a non-swimmer to turn once in shear
+
 # Per-grazer housekeeping. Which of them migrate vertically, how efficiently
 # each converts what it eats, and how many of each the panel will carry.
 MIGRATORS = (COPEPOD, KRILL)
@@ -1511,13 +1544,14 @@ DRAW = {
 
 class Agent:
     __slots__ = ("g", "x", "z", "ang", "spin", "mass", "age", "vigour",
-                 "gravid", "flash", "vis", "doomed", "mode")
+                 "gravid", "flash", "vis", "doomed", "mode", "head")
 
     def __init__(self, g, x, z, mass, rng, vis=0.02):
         self.g = g
         self.x = x
         self.z = z
         self.ang = rng.uniform(0, 2 * math.pi)
+        self.head = rng.uniform(0, 2 * math.pi)
         self.spin = rng.gauss(0, 0.25)
         self.mass = mass
         self.age = 0.0
@@ -1752,9 +1786,22 @@ class Ecosystem:
         if parent is None:
             g = Genome(kind if kind is not None else self._seed_kind(), r)
             z = r.uniform(2, Z_MAX * 0.85)
-            # arrive at an edge and drift in, rather than appearing mid-frame
-            x = r.uniform(-5, 5) if r.random() < 0.5 else r.uniform(W - 5, W + 5)
-            a = Agent(g, x % W, z, r.uniform(0.5, 0.9), r, 0.02)
+            # Across the whole field, not at an edge.
+            #
+            # Arrivals used to appear within five pixels of x=0 or x=W, on the
+            # reasoning that water flows in from one side. That was defensible
+            # when immigration was one cell a day and became badly wrong when
+            # advection made it twenty or thirty: cells entered at the seam,
+            # and with a residual drift of 38 px/day against a residence
+            # half-life of 1.3 days they were carried out again long before
+            # they reached the middle. Measured at day 5, 56% of the
+            # population sat in 17% of the width.
+            #
+            # And the edge model was wrong anyway. The panel is a vertical
+            # SLICE and the ship moves through it, not along it, so new water
+            # fills the whole slice rather than entering from one side.
+            x = r.uniform(0, W)
+            a = Agent(g, x, z, r.uniform(0.5, 0.9), r, 0.02)
         else:
             g = parent.g.child(r)
             z = max(0.5, min(Z_MAX - 0.5, parent.z + r.gauss(0, 4.0)))
@@ -1851,6 +1898,44 @@ class Ecosystem:
             self.no3[i] += rate * dt
             self.nit[i] += (rate * Y_NIT - LOSS_NIT * self.nit[i]) * dt
             self.nit[i] = max(0.004, min(1.2, self.nit[i]))
+
+    def _swim(self, dt):
+        """Move the motile ones at their own speed, and turn them to face it.
+
+        Ballistic below the heading decorrelation time and diffusive above it,
+        which is not fussiness -- it is the only way one piece of code can be
+        right at both ends of a speed control that spans six orders of
+        magnitude. At real time you watch a copepod swim; at a day a second
+        the same call has to become a random walk with the correct
+        diffusivity, D = v^2 * tau, or the displacement per step diverges."""
+        rng = self.rng
+        dt_s = dt * 86400.0
+        zpx = (H - TOP_M - BOT_M) / Z_MAX
+        for a in self.agents:
+            k = a.g.kind
+            bl = SWIM_BL.get(k)
+            if bl is None:
+                # not a swimmer: tumbling in shear, and nothing else
+                a.ang += rng.gauss(0.0, 1.0) * math.sqrt(
+                    min(dt_s, 4.0 * TUMBLE_S)) * (2.0 * math.pi / TUMBLE_S) * 0.35
+                continue
+            v = bl * 2.0 * visual_radius(a) * SWIM_SCALE      # px per second
+            tau = TURN_TAU.get(k, 10.0)
+            if dt_s < tau:
+                a.head += rng.gauss(0.0, math.sqrt(dt_s / tau))
+                dx = v * dt_s * math.cos(a.head)
+                dz = v * dt_s * math.sin(a.head)
+            else:
+                step = v * math.sqrt(tau * dt_s)              # D = v^2 tau
+                a.head = rng.uniform(0.0, 2.0 * math.pi)
+                dx = rng.gauss(0.0, step) * 0.7071
+                dz = rng.gauss(0.0, step) * 0.7071
+            a.x += dx
+            # vertical swimming is damped: the diel migration and the sinking
+            # terms own the depth axis, and a copepod that could cross fifty
+            # metres in a minute would make nonsense of both
+            a.z += dz * 0.25 / zpx
+            a.ang = a.head + math.pi          # the drawings face -u
 
     def _step_pico(self, dt, surface, chl, t):
         """Picoplankton, as a scalar field. Monod on the same nitrogen the
@@ -1981,6 +2066,9 @@ class Ecosystem:
         n_drift = len(drifters)
         born = []
 
+        # ---- swimming ------------------------------------------------------
+        self._swim(dt)
+
         # ---- advection and fade, common to everything --------------------
         for a in self.agents:
             a.x += env.current(t, a.z) * dt
@@ -2051,7 +2139,6 @@ class Ecosystem:
             grow = a.mass * mu * dt
             a.mass = min(2.45, a.mass + grow + ingested * 0.6)
             a.vigour = max(0.0, min(1.0, a.vigour + (mu * 2.2 - 0.10) * dt))
-            a.ang += a.spin * dt * 2.0
 
             if grow > 0:
                 want = grow * 0.16
@@ -2112,9 +2199,7 @@ class Ecosystem:
             n_all = sum(1 for h in hets if not h.doomed) + len(born)
             cap_ok = (nk + sum(1 for b in born if b.g.kind == k)
                       < HET_CAP.get(k, 2)) and n_all < MAX_ZOO
-            a.spin += rng.gauss(0, 2.5) * dt
-            a.spin *= math.exp(-4.0 * dt)          # dt-consistent damping
-            a.ang += a.spin * dt
+
             a.gravid = a.mass > 1.9
             if a.mass > 2.4 and cap_ok:
                 a.mass = 1.1
