@@ -1029,6 +1029,56 @@ Ranked by probability × damage.
 
 ---
 
+## 10f. What the motion costs
+
+`tools/power.py`. First-order, and every number in it is measured or from a
+datasheet except one, which is flagged.
+
+| | duty | MCU | panel | total | one 18650 |
+|---|---|---|---|---|---|
+| one frame a minute *(the original e-ink concept)* | 0.0% | 1.2 mA | 0.02 mA | **1.2 mA** | 103 d |
+| 5 fps | 1.8% | 1.9 | 0.50 | **2.4** | 53 d |
+| **10 fps** *(floor for the fastest swimmer to read)* | 3.6% | 2.5 | 0.99 | **3.5** | **36 d** |
+| 15 fps *(assumed at the first design conversation)* | 5.4% | 3.2 | 1.48 | **4.7** | 27 d |
+| 20 fps *(the preview's rate)* | 7.1% | 3.8 | 1.97 | **5.8** | 22 d |
+| 51 fps *(the panel's maximum)* | 18.2% | 7.9 | 5.01 | **12.9** | 10 d |
+
+**Three times the current, and an 18650 goes from about 100 days to about 36.**
+
+Two things worth knowing:
+
+- **The MCU dominates, not the panel.** At 10 fps the processor is 72% of the
+  draw. So the lever is *frame cost*, not refresh rate — halving the render
+  halves the duty cycle and nearly halves the total. If battery ever matters,
+  optimise the renderer, do not slow the animation.
+- **The weakest number is the frame cost**, extrapolated from a CPython
+  measurement (1.48 ms sim + 2.09 ms render) on the assumption that
+  interpreter overhead and the M33's slower clock roughly cancel. It wants
+  measuring on real hardware before anyone believes it.
+
+And the honest framing: **this was decided as a mains-powered object at the
+very first design conversation**, when the question was "moving, or slowly
+changing?" and the answer was "moving — you can watch it drift". The battery
+figures are for the gift boxes, where 36 days on a cell is a perfectly good
+answer and USB-C is a better one.
+
+### The bug the question found
+
+Asking about power surfaced something worse than a power problem. Swimming was
+advancing with *simulated* time, so at the default 1 MIN/SEC the fastest
+organism moved **65 px between frames**, and at 1 DAY/SEC, 2,853 px. It had
+stopped being an organism and become noise, at every speed except real time.
+
+Swimming now runs at **real** time regardless of the calendar — the same class
+of deliberate lie as drawing a 60 µm diatom twenty pixels across, and forced by
+the same thing: the speed control spans six orders of magnitude and swimming
+does not. It sits at 1.1 px/frame at every setting, and stays in a sensible
+ratio to the tidal drift at the default speed. The ecology is untouched, because
+swimming is a rendering behaviour and no equation reads the horizontal
+displacement it produces.
+
+---
+
 ## 10e. Motion, and why the panel was still
 
 Two things you noticed, both real, and both measurable before they were

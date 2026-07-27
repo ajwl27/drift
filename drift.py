@@ -654,6 +654,19 @@ SWIM_BL = {
 }
 SWIM_SCALE = 0.22          # global damper, set by eye: the fastest thing
                            # crosses the panel in about ten seconds
+
+# Swimming runs at REAL time, not simulated time.
+#
+# It is the same class of deliberate lie as drawing a 60 micron diatom twenty
+# pixels across, and it is forced by the same thing: the speed control spans
+# six orders of magnitude and swimming does not. Scaled with the calendar, a
+# tintinnid moves 65 px between frames at the default 1 MIN/SEC and 2,853 px
+# at 1 DAY/SEC -- it stops being an organism and becomes noise. Held at real
+# time it stays around 20 px/s at every setting, which also keeps it in a
+# sensible ratio to the tidal drift at the default speed.
+#
+# The ecology is unaffected: swimming is a rendering behaviour, and the
+# horizontal displacement it produces is not something any equation reads.
 TURN_TAU = {               # seconds before a heading decorrelates. Ciliates
     FLAGELLATE: 3.0, TINTINNID: 4.0, CERATIUM: 12.0, ORNITHO: 14.0,
     COPEPOD: 9.0, KRILL: 14.0, SALP: 25.0,
@@ -1864,6 +1877,8 @@ class Ecosystem:
     _deep_n = N_DEEP
     _iron = 1.0
     _n_target = 20
+    time_compression = 1.0     # simulated seconds per real second; the
+                               # preview sets it from the speed control
 
     def _mix_nitrogen(self, dt, mld, mixing):
         nb = max(1, min(NBINS, int(mld / BIN_M) + 1))
@@ -1909,7 +1924,7 @@ class Ecosystem:
         the same call has to become a random walk with the correct
         diffusivity, D = v^2 * tau, or the displacement per step diverges."""
         rng = self.rng
-        dt_s = dt * 86400.0
+        dt_s = dt * 86400.0 / max(1.0, self.time_compression)
         zpx = (H - TOP_M - BOT_M) / Z_MAX
         for a in self.agents:
             k = a.g.kind
@@ -2679,6 +2694,7 @@ def preview():
             speed = clamp_speed(snap_speed(speed * step ** wheel))
             toast = 1.4
 
+        eco.time_compression = speed * 86400.0
         if not paused:
             dt = real_dt * speed
             # sub-step so fast-forward stays numerically sane
