@@ -90,7 +90,7 @@ class Cadence:
 #
 # Ninety seconds is 4% of the GALLERY cycle. The water is still up for
 # eighteen minutes at a stretch, which is the ratio that matters.
-# Set by eye in tools/console.py rather than reasoned to. The move is much
+# Set by eye in console.py rather than reasoned to. The move is much
 # slower than the first guess: a minute to dolly in and a minute back out,
 # with half-minute rests at each end, which makes the interlude three minutes
 # long. That sounds extravagant until you notice it is 7% of a cycle whose

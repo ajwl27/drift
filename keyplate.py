@@ -204,7 +204,7 @@ BASE_ANG = -0.35           # the angle every specimen was drawn at before
 # column of them turning at once reads as fidgeting.
 #
 # So the plate gets its own constants, all of them multipliers on what the
-# water does, and all of them below 1. Tunable in tools/console.py under
+# water does, and all of them below 1. Tunable in console.py under
 # KEY PLATE, because "how much movement is too much on a thing being read"
 # is a judgement by eye like every other number in this file's neighbourhood.
 KEY_RATE = 1.00            # everything on the plate runs at this fraction of

@@ -2,7 +2,7 @@
 """
 DRIFT CONSOLE  -  the development build. Never ships, never ports.
 
-    python3 tools/console.py
+    python3 console.py
 
 Everything in this piece that cannot be reasoned to, on one screen, live, with
 the panel next to it and the measured consequence underneath. Swimming speed,
@@ -60,7 +60,7 @@ import math
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import drift                                                   # noqa: E402
 import keyplate                                                # noqa: E402
@@ -89,7 +89,7 @@ PAD = 10
 # would throw it away to save forty pixels.
 COL = 800                    # both control columns plus the gap between
 SUBCOL = 390                 # one of them
-GROUP_COL = {"MOTION": 0, "GAIT": 0, "WATER": 0,
+GROUP_COL = {"MOTION": 0, "GAIT": 0, "WATER": 0, "OCEAN": 0,
              "PANEL": 1, "SCENE": 1, "DISPLAY": 1,
              "TIMING": 1, "KEY PLATE": 1}
 RULER_MM = 100               # the calibration bar's true length. Fixed.
@@ -190,6 +190,41 @@ PARAMS = [
     # DRIFT_SCALE in drift.py for why that is not an option.
     Param("drift", "water past", 1.0, 100000.0, drift.DRIFT_SCALE, log=True,
           fmt="%.0f", unit="x", group="WATER"),   # shown as a crossing time
+    # --- what the water itself is like ---------------------------------
+    #
+    # These four are the only sliders here that change the ECOLOGY rather
+    # than how it is drawn or how fast it is watched, which is why they are
+    # their own group. Each of them is a judgement about how much of a real
+    # difference between two oceans a 300 x 400 panel should try to carry --
+    # a question that has no answer in the literature and only has one on a
+    # screen, next to a slider.
+    #
+    # `cells: floor` and `cells: cap` are the ends of the range and `spread`
+    # is the exponent between them. Solved rather than dialled: fix the fifth
+    # percentile of capacity at the floor and the ninety-fifth at the cap and
+    # the exponent follows. Drag them and the fit no longer holds, which is
+    # the point of being able to drag them.
+    Param("nfloor", "cells: floor", 1.0, 20.0, float(drift.N_FLOOR),
+          fmt="%.0f", group="OCEAN"),
+    Param("nmax", "cells: cap", 12.0, 60.0, float(drift.MAX_PHYTO),
+          fmt="%.0f", group="OCEAN"),
+    Param("capexp", "cells: spread", 0.20, 1.10, drift.CAP_EXP, fmt="%.2f",
+          group="OCEAN"),
+    # 0 switches the oxygen minimum zone off entirely and 2 doubles every
+    # critical threshold, which puts a floor under the animals in water that
+    # in truth has none. Useful for finding out what the mechanism looks like
+    # without sailing to Peru to see it.
+    Param("o2", "OMZ strength", 0.0, 2.0, 1.0, fmt="%.2f", unit="x",
+          group="OCEAN"),
+    # Bioluminescence is rare on purpose -- it is a startle response at
+    # night, not a lamp -- so at the true rate you can watch for a minute
+    # and see three. Wind this up to judge how a flash reads; wind it back
+    # to 1 before believing anything about how often one happens.
+    # Logarithmic, so the bottom of the travel is 0.1x rather than off -- a
+    # log slider has no zero. At 0.1x a flash is a once-an-evening event,
+    # which is as close to off as this needs to get.
+    Param("lum", "flash rate", 0.1, 40.0, 1.0, log=True, fmt="%.2f",
+          unit="x", group="OCEAN"),
     Param("fps", "frame rate", 0.25, 51.0, float(drift.TARGET_FPS), log=True,
           fmt="%.2f", unit=" fps", group="PANEL"),
     # 1.0 is the piece's real setting: one second per second, the whole
@@ -248,6 +283,8 @@ BASE_YAW = dict(drift.HELIX_YAW)
 BASE_HZ = dict(drift.HELIX_HZ)
 BASE_HOP = dict(drift.HOP_HZ)
 BASE_COAST = dict(drift.COAST_S)
+BASE_O2 = dict(drift.O2_CRIT)
+BASE_LUM = (drift.TURB_FLASH_HZ, drift.KRILL_FLASH_HZ, drift.FLASH_NEAR_HZ)
 
 # kind constant -> the identifier drift.py calls it by, so the exported block
 # is paste-ready rather than merely informative. NAMES would give the species
@@ -293,10 +330,25 @@ def apply_state(st, eco):
     # SWIM_SCALE is per-Ecosystem in the water and a module constant on the
     # plate, so it has to be set in both places or the two disagree
     drift.SWIM_SCALE = st["swim"]
+    drift.N_FLOOR = int(round(st["nfloor"]))
+    drift.MAX_PHYTO = int(round(st["nmax"]))
+    drift.MAX_AGENTS = drift.MAX_PHYTO + drift.MAX_ZOO
+    drift.CAP_EXP = st["capexp"]
+    for k, v in BASE_O2.items():
+        drift.O2_CRIT[k] = v * st["o2"]
+    drift.O2_CRIT_SHOWN = 145.0 * st["o2"]
+    drift.TURB_FLASH_HZ = BASE_LUM[0] * st["lum"]
+    drift.KRILL_FLASH_HZ = BASE_LUM[1] * st["lum"]
+    drift.FLASH_NEAR_HZ = BASE_LUM[2] * st["lum"]
     if eco is not None:
         eco.swim_scale = st["swim"]
         eco.turn_scale = st["turn"]
         eco.time_compression = st["tcomp"]
+        # The oxygen floors are derived once per ecology tick, which at one
+        # second per second is once an hour of your afternoon. A slider you
+        # have to wait an hour to see is not a slider, so the derivation is
+        # redone here as well.
+        eco._update_oxygen(eco.now)
 
 
 # --------------------------------------------------------------------------
@@ -595,7 +647,7 @@ def run(seed=5, day=420.0):
         return pygame.display.set_mode(size(split))
 
     def export():
-        lines = ["# pasted from tools/console.py",
+        lines = ["# pasted from console.py",
                  "SWIM_SCALE = %.4f" % live.st["swim"],
                  "TURN_SCALE = %.4f" % live.st["turn"],
                  "BODY_TAU = %.3f" % live.st["body"],
@@ -614,6 +666,23 @@ def run(seed=5, day=420.0):
                              for k, v in base.items())
             lines.append("%s = {%s}   # x%.2f" % (name, body, mult))
         lines.append("TUMBLE_S = %.0f" % live.st["tumble"])
+        lines += ["",
+                  "# how much of the ocean's own range the panel carries:",
+                  "N_FLOOR = %d" % int(round(live.st["nfloor"])),
+                  "MAX_PHYTO = %d" % int(round(live.st["nmax"])),
+                  "CAP_EXP = %.2f" % live.st["capexp"],
+                  "# CAP_SCALE is solved, not set: floor at the 5th "
+                  "percentile of capacity",
+                  "# and cap at the 95th. Re-solve it if the three above "
+                  "move.",
+                  "O2_CRIT = {%s}   # x%.2f"
+                  % (", ".join("%s: %.0f" % (KIND_ID.get(k, str(k)),
+                                             v * live.st["o2"])
+                               for k, v in BASE_O2.items()), live.st["o2"]),
+                  "TURB_FLASH_HZ = %.3f   # x%.2f"
+                  % (BASE_LUM[0] * live.st["lum"], live.st["lum"]),
+                  "KRILL_FLASH_HZ = %.3f" % (BASE_LUM[1] * live.st["lum"]),
+                  "FLASH_NEAR_HZ = %.3f" % (BASE_LUM[2] * live.st["lum"])]
         txt = "\n".join(lines)
         os.makedirs("docs", exist_ok=True)
         with open("docs/tuned_values.txt", "w") as fh:

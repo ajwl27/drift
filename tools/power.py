@@ -27,19 +27,30 @@ asleep.
 # MEASURED  -  this machine, CPython 3.11, day 300 of the Drake voyage
 # --------------------------------------------------------------------------
 #
-#   e = Ecosystem(seed=5, ...) spun to day 300, 41 agents, 300 x 400 panel
-#   timeit(lambda: e.advance(dt))                     -> 0.038 ms  (!)
-#   timeit(lambda: draw_screen(c, WATER, ...))        -> 3.33 ms
-#   timeit(lambda: draw_screen(c, MAP, ...))          -> 11.62 ms
-#   timeit(lambda: draw_screen(c, KEY, ...))          -> 3.53 ms
+# These come out of `python3 tools/bench.py`, which exists so that they are a
+# command rather than a memory. Median water (22 cells, the Moluccas on day
+# 760), 300 x 400 panel:
 #
-# SIM_MS collapsed from 1.73 to 0.038 and that is not an optimisation, it is
-# the piece running at its real speed. At one second per second a frame is
-# 5.8e-7 of a day, so Ecosystem.advance() does the swimming every frame and
-# calls the ecology once an hour of simulated time -- which at 1:1 is once an
-# hour. 0.038 ms is the swimming plus the amortised cost of that hourly step.
-SIM_MS = 0.038
-REN_MS = {"water": 3.33, "map": 11.62, "key": 3.53}
+#                            was      now
+#   eco.advance(dt)          0.102    0.046 ms
+#   water                    2.82     1.72 ms   (bloom 2.14, gyre 1.12)
+#   map, mean of the three   15.4     8.0  ms   (globe 9.95, chart 7.30)
+#   key plate                1.72     1.70 ms
+#
+# SIM_MS is small because the piece runs at its real speed: at one second per
+# second a frame is 5.8e-7 of a day, so Ecosystem.advance() does the swimming
+# every frame and calls the ecology once an hour of simulated time. This is
+# the swimming plus the amortised cost of that hourly step.
+#
+# The halvings are all structural rather than clever. The renderer: glyphs
+# cached as rectangles instead of rebuilt from bits per frame, the stipple
+# carrying its own depth bin, and the wrap-around draw attempted only for
+# cells actually on the seam. The map: the coastline cut into chunks with
+# bounding caps, so a chart of Peru does not project Kamchatka to find out it
+# is off screen. The simulation: current(t, z) factorises into a time term
+# and a depth term, and the time term is the same for every particle.
+SIM_MS = 0.046
+REN_MS = {"water": 1.72, "map": 8.0, "key": 1.70}
 
 # GALLERY cadence, from screens.py: a one-hour cycle carrying the map twice
 # and the key plate twice, so 4 x 720 s of water, 2 x 180 s of map and
@@ -340,9 +351,15 @@ def main():
             "Panel current on a fully changing image. The vendor figures are",
             "  typical, and every pixel moving every frame will be worse.",
             "Temperature. A cell at 0 C gives perhaps 70% of its rating.",
-            "The map screen's 8.4 ms. It is 0.8% of the time and folded into",
-            "  the weighted average above; if the cadence ever became",
-            "  map-heavy this model would need redoing."):
+            "Which water. A bloom is 2.14 ms a frame and an empty gyre",
+            "  1.12; the average above uses the median. Over the voyage",
+            "  that is worth a few percent either way, and the widened",
+            "  abundance range made the cheap frames cheaper rather than",
+            "  the expensive ones more expensive.",
+            "The map screen's 8.0 ms. It is a tenth of the hour and a",
+            "  third of the render budget, folded into the weighted",
+            "  average above. It is also the number most worth attacking",
+            "  next if this ever has to last longer."):
         print(line)
 
 

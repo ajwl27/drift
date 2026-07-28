@@ -21,42 +21,164 @@ import places
 # coastline, walked in place
 # --------------------------------------------------------------------------
 
+CHUNK = 24            # coastline points per cullable piece
+
+
 class Coast:
     """9084 points at 0.2 degree tolerance, 38 kB. Kept as one bytes object
     and indexed, never unpacked into Python tuples -- which is both faster
     here and an honest model of what the C version does with a const array
-    in flash."""
+    in flash.
 
-    __slots__ = ("b", "n", "offs")
+    CULLED BY BOUNDING CAP, which is the only reason the continuous zoom is
+    affordable.
+
+    The map used to be a still: rendered once when the interlude began and
+    held, which is what a reflective panel wants and which made nine thousand
+    projections a frame a non-problem because there was one frame. It is not
+    a still any more -- it opens on the globe and travels in to the chart and
+    back out -- so the coastline is now redrawn twenty times a second, and
+    projecting the whole world to discover that Kamchatka is off the bottom
+    of a chart of Peru is nine thousand transcendental functions spent on
+    nothing. Measured at 16 ms a frame, against 2 ms for the water.
+
+    So the line data is cut into chunks of two dozen points, and each chunk
+    carries the smallest spherical cap that contains it: a unit vector and an
+    angular radius, twenty bytes. A chunk is drawn only if its cap can reach
+    the frame, which is one dot product and one comparison. At chart scale
+    that rejects nineteen chunks in twenty before a single point is touched,
+    and on the globe it still rejects the entire far hemisphere.
+
+    Chunks overlap by one point so the joins do not open up.
+
+    The projection is inlined below rather than calling Camera.project. Nine
+    thousand bound-method calls is not a rounding error at this scale, and
+    the arithmetic is four lines."""
+
+    __slots__ = ("b", "n", "chunks")
 
     def __init__(self, path):
         with open(path, "rb") as f:
             self.b = f.read()
         self.n = struct.unpack_from("<H", self.b, 0)[0]
-        self.offs = []
+        self.chunks = []
         o = 2
         for _ in range(self.n):
             m = struct.unpack_from("<H", self.b, o)[0]
-            self.offs.append((o + 2, m))
+            base = o + 2
             o += 2 + 4 * m
+            k = 0
+            while k < m - 1:
+                j = min(k + CHUNK, m)
+                self.chunks.append(self._cap(base + 4 * k, j - k))
+                k = j - 1              # overlap by one, so the joins hold
+        self.chunks = tuple(self.chunks)
+
+    def _cap(self, base, m):
+        """(base, m, cx, cy, cz, cos_rad, sin_rad) for one chunk.
+
+        The cap centre is the normalised mean of the points' unit vectors and
+        the radius is the furthest of them from it. Not the minimal enclosing
+        cap -- that is a nicer problem than this deserves -- but within a few
+        percent of it for a two-dozen-point piece of coastline, and it only
+        ever has to be conservative."""
+        pts = struct.unpack_from("<%dh" % (2 * m), self.b, base)
+        sx = sy = sz = 0.0
+        vs = []
+        for k in range(m):
+            lo = math.radians(pts[2 * k] * 0.01)
+            la = math.radians(pts[2 * k + 1] * 0.01)
+            cla = math.cos(la)
+            v = (cla * math.cos(lo), cla * math.sin(lo), math.sin(la))
+            vs.append(v)
+            sx += v[0]; sy += v[1]; sz += v[2]
+        n = math.sqrt(sx * sx + sy * sy + sz * sz) or 1.0
+        cx, cy, cz = sx / n, sy / n, sz / n
+        worst = 1.0
+        for (x, y, z) in vs:
+            d = cx * x + cy * y + cz * z
+            if d < worst:
+                worst = d
+        rad = math.acos(max(-1.0, min(1.0, worst)))
+        return (base, m, cx, cy, cz, math.cos(rad), math.sin(rad))
 
     def draw(self, c, cam, w=W, h=H):
         b = self.b
         unpack = struct.unpack_from
+        line = c.line
+        R = cam.R
+        slat = cam.slat; clat = cam.clat
+        cb = cam.cb; sb = cam.sb
+        lon0 = cam.lon
+        hw = w * 0.5; hh = h * 0.5
+        cos_ = math.cos; sin_ = math.sin; rad_ = math.radians
+
+        # how far off the camera axis anything can be and still land inside
+        # the frame: R*sin(c) <= half-diagonal
+        f = math.hypot(hw, hh) / R
+        cmax = math.pi * 0.5 if f >= 1.0 else math.asin(f)
+        ccm = cos_(cmax); scm = sin_(cmax)
+        # camera centre as a unit vector, in the same frame as the caps
+        la0 = rad_(cam.lat); lo0 = rad_(lon0)
+        ex = clat * cos_(lo0); ey = clat * sin_(lo0); ez = slat
+
         segs = 0
-        for (base, m) in self.offs:
+        for (base, m, cx, cy, cz, crad, srad) in self.chunks:
+            # cos(cmax + rad); if the chunk's nearest point is further off
+            # axis than that, none of it can be in frame
+            thr = ccm * crad - scm * srad
+            if (cx * ex + cy * ey + cz * ez) < thr:
+                continue
+            pts = unpack("<%dh" % (2 * m), b, base)
             px = py = 0.0
+            ipx = ipy = -9999
             pv = False
             for k in range(m):
-                lon, lat = unpack("<hh", b, base + 4 * k)
-                x, y, vis = cam.project(lat * 0.01, lon * 0.01, w, h)
-                if pv and vis:
-                    # both ends on this side of the world: clip to frame
+                la = rad_(pts[2 * k + 1] * 0.01)
+                dl = rad_(pts[2 * k] * 0.01 - lon0)
+                cla = cos_(la)
+                sla = sin_(la)
+                cdl = cos_(dl)
+                if slat * sla + clat * cla * cdl < 0.0:
+                    pv = False
+                    continue
+                x = R * cla * sin_(dl)
+                y = R * (clat * sla - slat * cla * cdl)
+                x, y = hw + x * cb - y * sb, hh - (x * sb + y * cb)
+                ix = int(x); iy = int(y)
+                if pv:
+                    # SEGMENTS THAT LAND ON THE PIXEL THEY START FROM ARE
+                    # NOT DRAWN, and the anchor does not move, so the next
+                    # one is measured from here and the line stays connected.
+                    #
+                    # The coastline is generalised to 0.2 degrees, which at
+                    # globe scale is half a pixel: two thirds of the nine
+                    # thousand segments were a call into the line routine to
+                    # set a pixel that was already set.
+                    #
+                    # Measured against drawing every segment, over eighteen
+                    # views spanning the voyage: 581 pixels differ out of
+                    # 68,000 drawn, 1.7% at globe scale and nothing at all at
+                    # chart scale. Those are places where the coast bends
+                    # inside a single pixel and the chord across the bend
+                    # rounds the other way.
+                    #
+                    # The first version of this test allowed a whole pixel of
+                    # drift instead, on the reasoning that a sub-pixel error
+                    # cannot matter. It cost a FIFTH of the ink on the globe:
+                    # every island small enough to fit inside the tolerance
+                    # stopped being drawn at all. Bounded error is not the
+                    # same as no error when the thing being drawn is smaller
+                    # than the bound -- so the test is on the pixel the point
+                    # lands in, not on the distance to it.
+                    if ix == ipx and iy == ipy:
+                        continue
                     if not ((x < 0 and px < 0) or (x >= w and px >= w)
                             or (y < 0 and py < 0) or (y >= h and py >= h)):
-                        c.line(px, py, x, y)
+                        line(px, py, x, y)
                         segs += 1
-                px, py, pv = x, y, vis
+                px, py, pv = x, y, True
+                ipx, ipy = ix, iy
         return segs
 
 

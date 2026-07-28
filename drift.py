@@ -8,12 +8,18 @@ panel will show. No anti-aliasing, no greyscale, no cheating.
 
 Architecture is deliberately split so the port to RP2350 is mechanical:
 
-    Canvas       ~200 lines of integer raster primitives.  Reimplement these
-                 six functions in C and everything above them ports unchanged.
+    Canvas       ~250 lines of integer raster primitives.  Reimplement these
+                 eight functions in C and everything above them ports
+                 unchanged.
     Environment  pure float maths, no state.  Ports as-is.
     Ecosystem    NPZ model + individual agents.  Ports as-is.
     Renderer     calls Canvas only.  Ports as-is.
     preview()    pygame.  Thrown away on the port.
+
+There are two files you run. This one is the piece; console.py is the
+development build, where every constant in here is a slider with the panel
+next to it. Everything else is either a module this imports or a tool under
+tools/ that builds a data file or checks a claim.
 
 Run:
     pip install pygame numpy
@@ -64,19 +70,19 @@ SCALE = 0.9138             # preview upscale, and this value is TRUE PHYSICAL
                            # SIZE on a 27in 1440p monitor (108.79 ppi) for a
                            # 4.2in 300x400 panel at 119.05 ppi. Fractional, so
                            # the preview resamples rather than replicating --
-                           # see the note in preview(). tools/console.py has a
+                           # see the note in preview(). console.py has a
                            # ruler that computes this for any monitor; set it
                            # to 2 for a big blocky view instead.
 TARGET_FPS = 20            # preview frame rate. Both this and SWIM_SCALE are
                            # judgements about how a moving thing looks, so
-                           # they are set with tools/tune.py rather than by
+                           # they are set with console.py rather than by
                            # reasoning, and pasted back here.
 
 LAT = 52.0800              # Melbourn
 LON = 0.0200
 
 Z_MAX = 55.0              # metres of water column mapped to the panel height
-MAX_PHYTO = 30             # separate caps, or phytoplankton crowd out the
+MAX_PHYTO = 42             # separate caps, or phytoplankton crowd out the
 MAX_ZOO = 7                # grazers entirely during a bloom
 # HOW FAST THE WATER GOES PAST, and the honest version of this is worth
 # writing down because the obvious answer is unusable.
@@ -102,7 +108,7 @@ MAX_ZOO = 7                # grazers entirely during a bloom
 # dragged it -- the M2 tide passes through zero twice a day, and twenty
 # thousand times nothing is nothing.
 #
-# Tunable in tools/console.py, and it is a judgement about looking, like
+# Tunable in console.py, and it is a judgement about looking, like
 # SWIM_SCALE and TARGET_FPS.
 DRIFT_SCALE = 1.0
 
@@ -127,13 +133,38 @@ FLUSH_PER_100KM = 0.55     # fraction of the field replaced per day at 100
                            # km/day. Residence half-life about 1.3 days under
                            # way, which is fast enough to track the water and
                            # slow enough to watch a cell drift and divide.
-CAP_EXP = 0.45             # n_visible goes as capacity^0.45 -- this is the
-                           # compression from the plan's section 1, which
-                           # until now was never actually implemented: the
-                           # agent count was capped and culled instead, which
-                           # is a different thing and a worse one.
-CAP_SCALE = 13.0
-N_FLOOR = 9                # the panel is never bare
+# HOW MANY CELLS THE WATER GETS, and this is the one place where the piece
+# decides what a difference between two oceans is worth.
+#
+# n_visible = CAP_SCALE * capacity ** CAP_EXP, floored and capped. The
+# exponent is a compression, because the real range is not renderable:
+# measured over the whole of Drake's track, capacity spans 0.17 to 16.6, a
+# hundredfold, and the panel has room for a few dozen sprites.
+#
+# The previous settings -- floor 9, cap 30, exponent 0.45, scale 13 -- spent
+# THIRTY PER CENT of the voyage pinned at the floor and another thirty
+# pinned at the cap. Two thirds of the days were showing one of two numbers.
+# So the South Pacific gyre, which is as close to a desert as the sea gets,
+# and the Patagonian shelf in spring, which is one of the richest patches of
+# water on Earth, arrived on the panel as nine cells and thirty: a difference
+# of three and a bit, standing in for a difference of a hundred.
+#
+# These four numbers are solved rather than chosen. Fix the fifth percentile
+# of capacity at 4 cells and the ninety-fifth at 40, and the exponent and
+# scale follow from the two-point fit. The result spends 7% of the voyage on
+# the floor and 2% on the cap, and the median lands at 13.
+#
+# The floor of 4 is the part that took nerve and is the part that is right.
+# A gyre panel with four large cells on it looks nearly empty because an
+# oligotrophic gyre IS nearly empty; the picoplankton stipple and the marine
+# snow are still there, which is also true, because in that water the
+# picoplankton is essentially the whole of the standing stock. Raising the
+# cap to 42 is nearly free by comparison -- it is the rare frame, so it costs
+# peak render time and not mean power, and the mean actually FALLS, because
+# the median count drops from 17 to 13.
+CAP_EXP = 0.55
+CAP_SCALE = 9.3
+N_FLOOR = 4                # the gyre is allowed to look like the gyre
 MAX_AGENTS = MAX_PHYTO + MAX_ZOO   # render cost lives here
 SNOW_COUNT = 80            # fine unresolved detritus, decorative
 MAX_DETRITUS = 46          # resolved particles, from actual deaths
@@ -272,6 +303,44 @@ class Canvas:
         for yy in range(y0, y1):
             self.buf[yy * bw + x0:yy * bw + x1] = row
 
+    def rects(self, seq, ox, oy):
+        """Fill a whole precomputed run of blocks in one call.
+
+        This exists for the font and it is the single cheapest thing in the
+        file. Drawing a letter used to be thirty-five calls into fill_rect
+        with a five-by-seven bit test around them; a glyph is now a cached
+        tuple of maximal rectangles -- about fourteen of them -- passed in
+        whole. The bit tests happen once ever, per character per size,
+        instead of once per character per frame.
+
+        It matters far more on the panel than it does here. Over there the
+        Canvas is C and everything calling it is Python, so what costs is the
+        number of times Python crosses the boundary, and this cuts that by a
+        factor of thirty."""
+        ox = int(ox); oy = int(oy)
+        bw = self.w
+        cx0 = self.cx0; cy0 = self.cy0; cx1 = self.cx1; cy1 = self.cy1
+        buf = self.buf
+        for (dx, dy, w, h) in seq:
+            x0 = ox + dx
+            y0 = oy + dy
+            x1 = x0 + w
+            y1 = y0 + h
+            if x0 < cx0:
+                x0 = cx0
+            if y0 < cy0:
+                y0 = cy0
+            if x1 > cx1:
+                x1 = cx1
+            if y1 > cy1:
+                y1 = cy1
+            if x1 <= x0 or y1 <= y0:
+                continue
+            row = b"\x01" * (x1 - x0)
+            for yy in range(y0, y1):
+                o = yy * bw
+                buf[o + x0:o + x1] = row
+
     def line(self, x0, y0, x1, y1):
         x0 = int(x0); y0 = int(y0); x1 = int(x1); y1 = int(y1)
         w = self.w; h = self.h; buf = self.buf
@@ -302,26 +371,80 @@ class Canvas:
                 y0 += sy
 
     def polyline(self, pts, close=False):
+        """Every organism in the piece is a handful of these.
+
+        On the panel this is one C call per shape; here it is one Python call
+        per segment, and there are nine hundred segments a frame. Which is
+        why the whole geometry of a drawing is handed over at once rather
+        than a segment at a time -- the interface is shaped for the hardware,
+        and the preview merely tolerates it."""
         n = len(pts)
         if n < 2:
             return
-        for i in range(n - 1):
-            a = pts[i]; b = pts[i + 1]
-            self.line(a[0], a[1], b[0], b[1])
+        line = self.line
+        a = pts[0]
+        for i in range(1, n):
+            b = pts[i]
+            line(a[0], a[1], b[0], b[1])
+            a = b
         if close:
-            self.line(pts[-1][0], pts[-1][1], pts[0][0], pts[0][1])
+            b = pts[0]
+            line(a[0], a[1], b[0], b[1])
 
     def circle(self, cx, cy, r):
-        """Midpoint circle. Crisper than parametric sampling at small radii."""
+        """Midpoint circle. Crisper than parametric sampling at small radii.
+
+        The eight-way plot writes the buffer directly rather than going
+        through px(). Radiolarian shells, coccoliths and foram chambers are
+        all circles, so this is called about ninety times a frame at eight
+        pixels a step, and the method-call overhead was a tenth of the
+        renderer."""
         cx = int(cx); cy = int(cy); r = int(r)
         if r < 1:
             self.px(cx, cy)
+            return
+        bw = self.w; buf = self.buf
+        cx0 = self.cx0; cy0 = self.cy0; cx1 = self.cx1; cy1 = self.cy1
+        x = r; y = 0; err = 1 - r
+        while x >= y:
+            for sx, sy in ((x, y), (y, x), (-x, y), (-y, x),
+                           (-x, -y), (-y, -x), (x, -y), (y, -x)):
+                px = cx + sx
+                py = cy + sy
+                if cx0 <= px < cx1 and cy0 <= py < cy1:
+                    buf[py * bw + px] = 1
+            y += 1
+            if err < 0:
+                err += 2 * y + 1
+            else:
+                x -= 1
+                err += 2 * (y - x) + 1
+
+    def faint_circle(self, cx, cy, r, alpha):
+        """A circle that can be dimmer than one pixel.
+
+        The same midpoint walk, with each pixel put through the ordered
+        dither the text already uses. One bit of depth cannot make a ring
+        fade, so the ring loses pixels instead -- and because BAYER8 is
+        indexed in screen space rather than along the circumference, an
+        expanding ring thins evenly instead of unravelling from one side."""
+        if alpha >= 0.999:
+            return self.circle(cx, cy, r)
+        if alpha <= 0.0:
+            return
+        thr = int(alpha * 64.0)
+        cx = int(cx); cy = int(cy); r = int(r)
+        if r < 1:
+            if BAYER8[cy & 7][cx & 7] < thr:
+                self.px(cx, cy)
             return
         x = r; y = 0; err = 1 - r
         while x >= y:
             for sx, sy in ((x, y), (y, x), (-x, y), (-y, x),
                            (-x, -y), (-y, -x), (x, -y), (y, -x)):
-                self.px(cx + sx, cy + sy)
+                px, py = cx + sx, cy + sy
+                if BAYER8[py & 7][px & 7] < thr:
+                    self.px(px, py)
             y += 1
             if err < 0:
                 err += 2 * y + 1
@@ -408,25 +531,6 @@ BAYER8 = (
 )
 
 
-# --- tiny 3x5 font, column-major, bit 0 = top row -------------------------
-
-FONT = {
-    "0": (31, 17, 31), "1": (2, 31, 0),  "2": (25, 21, 23), "3": (17, 21, 31),
-    "4": (7, 4, 31),   "5": (23, 21, 29), "6": (31, 21, 29), "7": (1, 1, 31),
-    "8": (31, 21, 31), "9": (23, 21, 31),
-    "A": (31, 5, 31),  "B": (31, 21, 10), "C": (31, 17, 17), "D": (31, 17, 14),
-    "E": (31, 21, 17), "F": (31, 5, 1),   "G": (31, 17, 29), "H": (31, 4, 31),
-    "I": (17, 31, 17), "J": (24, 16, 31), "K": (31, 4, 27),  "L": (31, 16, 16),
-    "M": (31, 3, 31),  "N": (31, 6, 31),  "O": (31, 17, 31), "P": (31, 5, 7),
-    "Q": (15, 9, 23),  "R": (31, 5, 23),  "S": (23, 21, 29), "T": (1, 31, 1),
-    "U": (31, 16, 31), "V": (15, 16, 15), "W": (31, 24, 31), "X": (27, 4, 27),
-    "Y": (3, 28, 3),   "Z": (25, 21, 19),
-    " ": (0, 0, 0),  ".": (0, 16, 0),  ",": (0, 24, 0),  "-": (4, 4, 4),
-    ":": (0, 10, 0), "/": (16, 4, 1),  "'": (0, 3, 0),   "\xb0": (3, 3, 0),
-    "+": (4, 14, 4), "(": (14, 17, 0), ")": (0, 17, 14),
-}
-
-
 # --- 5x7 font, the one you can actually read ------------------------------
 #
 # The 3x5 above is 5 pixels tall, which on a 119 ppi panel is 1.07 mm. It was
@@ -508,9 +612,9 @@ def _compile7(rows):
     return tuple(cols)
 
 
-# A font is (glyphs, width, height). Two of them: the 3x5 for anything that
-# must be tiny, and the 5x7 for everything a person is meant to read.
-FONT3 = ({k: v for k, v in FONT.items()}, 3, 5)
+# A font is (glyphs, width, height). There used to be two, and the 3x5 one is
+# gone: at 119 ppi a five-pixel cap is a millimetre, which is a decoration of
+# writing rather than writing, and once the HUD went nothing referenced it.
 FONT7 = ({ch: _compile7(rows) for ch, *rows in _G7}, 5, 7)
 
 # Legibility. A cap height wants to be roughly 1/250 of the viewing distance
@@ -519,10 +623,50 @@ FONT7 = ({ch: _compile7(rows) for ch, *rows in _G7}, 5, 7)
 #
 # These are set by eye like SWIM_SCALE and TARGET_FPS -- the arithmetic gives
 # the bracket and the room gives the answer -- so they are tunable in
-# tools/console.py rather than argued for here.
+# console.py rather than argued for here.
 T_BIG = 3                  # 15 x 21 px, cap 4.5 mm. Names, and the one
                            # number a passer-by should be able to read.
 T_MED = 2                  # 10 x 14 px, cap 3.0 mm. Everything else.
+
+
+_GLYPH_RECTS = {}
+
+
+def _glyph_rects(g, gw, gh, scale):
+    """One glyph at one size, as the fewest solid rectangles that cover it.
+
+    Horizontal runs first, then merged downward wherever the run below has
+    the same left edge and width -- which for a 5x7 face is most of them,
+    because letters are made of strokes. An 'E' at scale 3 comes out as six
+    rectangles rather than thirty-nine single-pixel blocks.
+
+    Built once per character per size and kept. Eighteen bytes a rectangle
+    and a few dozen characters ever used means the whole cache is under ten
+    kilobytes, against a font raster cache which would be an order more."""
+    runs = []
+    for row in range(gh):
+        col = 0
+        while col < gw:
+            if g[col] & (1 << row):
+                c2 = col
+                while c2 + 1 < gw and (g[c2 + 1] & (1 << row)):
+                    c2 += 1
+                runs.append([col * scale, row * scale,
+                             (c2 - col + 1) * scale, scale])
+                col = c2 + 1
+            else:
+                col += 1
+    open_at = {}          # (x, w) -> index of a rectangle whose bottom is free
+    out = []
+    for r in runs:
+        key = (r[0], r[2])
+        i = open_at.get(key)
+        if i is not None and out[i][1] + out[i][3] == r[1]:
+            out[i][3] += r[3]
+        else:
+            open_at[key] = len(out)
+            out.append(r)
+    return tuple(tuple(r) for r in out)
 
 
 def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None, alpha=1.0):
@@ -543,7 +687,24 @@ def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None, alpha=1.0):
     thr = int(alpha * 64.0)
     if thr <= 0:
         return x + step * len(s)
-    solid = thr >= 64
+    if thr >= 64:
+        # The solid path, which is nearly every character ever drawn: one
+        # cached tuple of rectangles and one call per glyph.
+        cache = _GLYPH_RECTS
+        gid = id(glyphs)
+        for ch in s.upper():
+            key = (gid, ch, scale)
+            rects = cache.get(key)
+            if rects is None:
+                rects = _glyph_rects(glyphs.get(ch, blank), gw, gh, scale)
+                cache[key] = rects
+            if rects:
+                canvas.rects(rects, x, y)
+            x += step
+        return x
+    # The dithered path, for writing that is fading in. Per pixel, because
+    # the pattern is in screen space and a cached glyph would carry the
+    # dither of wherever it was first drawn.
     for ch in s.upper():
         g = glyphs.get(ch, blank)
         for col in range(gw):
@@ -553,19 +714,15 @@ def text(canvas, x, y, s, spacing=1, scale=T_MED, font=None, alpha=1.0):
             for row in range(gh):
                 if not (bits & (1 << row)):
                     continue
-                px0 = x + col * scale
-                py0 = y + row * scale
-                if solid and scale > 1:
-                    canvas.fill_rect(px0, py0, scale, scale)
-                elif solid:
-                    canvas.px(px0, py0)
-                else:
-                    for dy in range(scale):
-                        for dx in range(scale):
-                            xx = int(px0) + dx
-                            yy = int(py0) + dy
-                            if BAYER8[yy & 7][xx & 7] < thr:
-                                canvas.px(xx, yy)
+                px0 = int(x) + col * scale
+                py0 = int(y) + row * scale
+                for dy in range(scale):
+                    yy = py0 + dy
+                    br = BAYER8[yy & 7]
+                    for dx in range(scale):
+                        xx = px0 + dx
+                        if br[xx & 7] < thr:
+                            canvas.px(xx, yy)
         x += step
     return x
 
@@ -739,6 +896,26 @@ class Environment:
         la, lo = self.where(t_days)
         return self.ocean.shelf_km(la, lo)
 
+    def oxygen_profile(self, t_days):
+        """(surface umol/kg, change per metre) for the water under the ship.
+
+        Returned as a line rather than as a function because that is what the
+        two carried levels are, and because the caller wants to ask about it
+        once per agent per frame. Two bilinear samples per ecology tick
+        instead of two per query.
+
+        The fallback when there is no ocean file is saturated water with no
+        gradient, which is what the North Atlantic actually looks like and
+        which switches the whole mechanism off."""
+        if self.ocean is None:
+            return 250.0, 0.0
+        la, lo = self.where(t_days)
+        a = self.ocean.oxygen(la, lo, 0.0)
+        b = self.ocean.oxygen(la, lo, 50.0)
+        if a is None or b is None:
+            return 250.0, 0.0
+        return a, (b - a) / 50.0
+
     def hemisphere_doy(self, t_days):
         """Day of year, flipped in the southern hemisphere.
 
@@ -852,7 +1029,22 @@ class Environment:
         # what this control is actually about -- and multiplying that gives a
         # flow that is there whenever you look, with the tide still riding on
         # top of it at its own amplitude.
-        return (tide + U_RESID * DRIFT_SCALE) * shear * (1.0 + 0.5 * self.storm)
+        return self.current_scale(t_days) * shear
+
+    def current_scale(self, t_days):
+        """The part of the current that is the same everywhere in the panel.
+
+        current(t, z) factorises exactly into a time term and a depth term,
+        and separating them is worth a paragraph because advection asks for
+        this once per particle per frame -- agents, detritus and marine snow,
+        a hundred and twenty times -- and the time term is two trigonometric
+        evaluations that produce the identical number every one of those
+        times. Now it is evaluated once and the per-particle cost is one
+        exponential."""
+        spring_neap = 0.62 + 0.38 * math.cos(
+            2 * math.pi * (t_days - 2.0) / 14.765)
+        tide = U_TIDE * spring_neap * math.sin(2 * math.pi * t_days / T_M2)
+        return (tide + U_RESID * DRIFT_SCALE) * (1.0 + 0.5 * self.storm)
 
     def temperature(self, t_days, z):
         if self.ocean is not None:
@@ -956,7 +1148,7 @@ SWIM_BL = {
     FLAGELLATE: 14.0, TINTINNID: 8.0, KRILL: 3.0, CERATIUM: 2.0,
     ORNITHO: 1.6, COPEPOD: 1.1, SALP: 0.6,
 }
-SWIM_SCALE = 0.09          # global damper, set by eye with tools/console.py.
+SWIM_SCALE = 0.09          # global damper, set by eye with console.py.
                            # It is the fraction of true speed the panel shows,
                            # so this is eleven-fold slow motion (see 10g).
 
@@ -1035,7 +1227,7 @@ BODY_TAU = 0.50
 # wander". Left at 1.0 the paths are the real animals' paths; the scaling
 # above already fixed the crumpling, and this exists because how much
 # meandering looks alive on a panel is another judgement by eye, tuned with
-# tools/tune.py turn rather than argued for.
+# console.py turn rather than argued for.
 TURN_SCALE = 1.0
 
 # Per-grazer housekeeping. Which of them migrate vertically, how efficiently
@@ -1045,6 +1237,85 @@ HET_ASSIM = {COPEPOD: 1.4, TINTINNID: 1.1, KRILL: 1.3, SALP: 1.6}
 # Per class, and they must sum to no more than MAX_ZOO or the total cap is a
 # fiction that only the seeding path respects.
 HET_CAP = {COPEPOD: 3, TINTINNID: 2, KRILL: 2, SALP: 2}
+
+# --- the oxygen ceiling on where an animal can be --------------------------
+#
+# In most of the world ocean this does nothing at all, which is the point.
+# The top fifty metres are within a few percent of saturation almost
+# everywhere: 233 umol/kg in the South Pacific gyre, 250 in the North
+# Atlantic, 322 in the Drake Passage. Then the ship turns north up the coast
+# of Peru and it is 114 at the bottom of the panel and falling by two
+# micromoles a metre, because the shallowest oxygen minimum zone in the world
+# is directly under the track.
+#
+# What that does to the animals is habitat compression. Large, active
+# swimmers have the highest critical oxygen partial pressure -- they are
+# running the biggest oxygen debt per gram and they are the first to be
+# excluded -- and their daytime descent stops at the depth where the water
+# can no longer support them, instead of continuing into the dark the way it
+# does everywhere else. This is one of the better documented things about the
+# eastern tropical Pacific: the zooplankton biomass maximum sits on the upper
+# oxycline and the deep daytime refuge is simply not available.
+#
+# The ORDERING here is the part with evidence behind it (Childress & Seibel
+# 1998; Seibel 2011 on critical PO2 scaling with activity and body size;
+# Wishner et al. 2013 on faunal boundaries at the Peru and ETNP oxyclines).
+# The absolute numbers are calibrated, not measured: they are set so that the
+# boundary lands where the literature puts it off Callao -- around thirty to
+# forty metres -- and so that NOTHING is affected anywhere else on any of the
+# tracks. A threshold that changed behaviour in the Atlantic would be a bug.
+#
+# Protists are absent from this table on purpose. Ciliates, radiolarians and
+# foraminifera are orders of magnitude more tolerant than a copepod and some
+# of them live in the OMZ core; giving them a ceiling would be inventing an
+# effect to make the picture busier.
+O2_CRIT = {KRILL: 165.0, COPEPOD: 145.0, SALP: 125.0}
+O2_CRIT_SHOWN = 145.0      # the one threshold the panel draws a rule at
+O2_FLOOR_MIN = 8.0         # a floor is a squeeze, never a lid on the surface
+
+# --- bioluminescence -------------------------------------------------------
+#
+# Until now the panel did not know what time of night it was. Light drove
+# photosynthesis and the copepods went up and down, and that was the whole of
+# the diel cycle: at three in the morning the piece looked like the piece.
+# The sea does not look like that. The single most striking thing about the
+# open ocean after dark is that disturbing it makes it flash.
+#
+# Three facts are doing the work here, and each of them is why one of these
+# constants exists.
+#
+# 1. IT IS MECHANICALLY TRIGGERED. Dinoflagellate luminescence is a response
+#    to shear -- a predator's approach, a breaking wave, a hand through the
+#    water -- not a lamp left on. So flashes here are fired by something
+#    passing close, and by turbulence, and never spontaneously in still
+#    water.
+# 2. IT IS UNDER A CIRCADIAN CLOCK. Lingulodinium is the textbook case:
+#    stimulate the same culture at noon and at midnight and you get two
+#    orders of magnitude difference in light, from the cell's own clock and
+#    not from the stimulus. So NIGHT_I gates the whole mechanism, and it is
+#    gated on the sun rather than on a rule about hours, which means it
+#    follows the ship into the polar summer and correctly gives up.
+# 3. IT IS FAST. A dinoflagellate flash is about a tenth of a second and the
+#    afterglow is shorter than that. FLASH_S is nearly ten times longer,
+#    which is a deliberate lie: at twenty frames a second a true flash would
+#    occupy two frames and read as a rendering fault. This is the one number
+#    on this list chosen for the eye rather than from the literature.
+#
+# Krill are here for a different reason -- they have actual photophores and
+# signal with them rather than only startling -- so they get a slow
+# spontaneous rate of their own instead of needing to be frightened.
+LUMINOUS = {CERATIUM: 1.0, ORNITHO: 0.85, KRILL: 1.0}
+NIGHT_I = 0.06             # normalised surface irradiance; below this the
+                           # circadian gate is open
+FLASH_S = 0.85             # REAL seconds a flash stays on screen
+FLASH_R0, FLASH_R1 = 1.25, 3.6     # ring radius, in cell radii, start to end
+FLASH_NEAR = 30.0          # px. How close a swimmer passes to set one off
+FLASH_NEAR_HZ = 1.6        # and how quickly, once it is that close: this is a
+                           # rate and not a probability, so a slow pass and a
+                           # fast one are both about as likely to fire, and
+                           # neither depends on the frame rate
+TURB_FLASH_HZ = 0.22       # per luminous cell per real second, at full mixing
+KRILL_FLASH_HZ = 0.09      # per krill per real second, unprovoked
 
 # Visual radius as a multiple of the nominal draw radius.  A Chaetoceros
 # chain throws setae out to 3.4r and spans 6r along its axis, so using the
@@ -1990,6 +2261,11 @@ DRAW = {
     KRILL: draw_krill,
 }
 
+# The ones whose drawing takes an animation phase. Kept as a set rather than
+# tried-and-caught per agent per frame, because the render loop is the one
+# place in this file where a dictionary lookup is worth thinking about.
+PHASED = frozenset((CHAIN, CORETHRON, SALP, KRILL))
+
 
 # --------------------------------------------------------------------------
 # 5. ECOSYSTEM  -  NPZ dynamics carried by individual agents
@@ -2018,7 +2294,7 @@ class Agent:
         self.age = 0.0
         self.vigour = 1.0
         self.gravid = False
-        self.flash = 0.0
+        self.flash = -1e9         # real_t of the last flash; never, so far
         self.vis = vis            # 0..1 visual presence. This is what stops
         self.doomed = False       # cells popping in and out of existence.
         self.mode = TROPHY[g.kind]
@@ -2189,11 +2465,19 @@ class Ecosystem:
         water ahead, compressed -- so the count tracks the ocean while each
         individual's mass, and which type actually thrives, stay in the hands
         of the local dynamics. A bloom is still something that happens."""
-        if self.track is None:
-            return
         rng = self.rng
-        speed = self.track.speed(t)
-        rate = FLUSH_PER_100KM * speed / 100.0
+        if self.track is None:
+            # Standing still off Melbourn. No flushing -- but this used to
+            # return here, and returning was a bug that outlived its reason:
+            # once arrivals moved into this method, the no-track path stopped
+            # having any source of phytoplankton at all. `drift.py --stills`
+            # has been rendering a panel of grazers on empty water and a
+            # biomass of exactly zero, which nothing noticed because every
+            # check in tools/ runs the voyage. Water at anchor is not sterile;
+            # only the flush rate is zero.
+            rate = 0.0
+        else:
+            rate = FLUSH_PER_100KM * self.track.speed(t) / 100.0
         cap = self._capacity(t)
         n_target = max(N_FLOOR, min(MAX_PHYTO,
                                     int(round(CAP_SCALE * cap ** CAP_EXP))))
@@ -2353,8 +2637,35 @@ class Ecosystem:
     _deep_n = N_DEEP
     _iron = 1.0
     _n_target = 20
+    _o2_a, _o2_b = 250.0, 0.0        # umol/kg at the surface, and per metre
+    _o2_floor = {}                   # kind -> deepest habitable metre
+    _o2_rule = None                  # depth of the drawn rule, or None
     time_compression = 1.0     # simulated seconds per real second; the
                                # preview sets it from the speed control
+
+    def o2(self, z):
+        """Dissolved oxygen at depth z, umol/kg. A multiply and an add: the
+        two bilinear samples happened once, on the ecology tick."""
+        return max(0.0, self._o2_a + self._o2_b * z)
+
+    def _update_oxygen(self, t):
+        """Turn the profile into the one number each animal needs -- how deep
+        it can go -- once per tick rather than once per agent per frame."""
+        self._o2_a, self._o2_b = self.env.oxygen_profile(t)
+        a, b = self._o2_a, self._o2_b
+        floors = {}
+        for k, crit in O2_CRIT.items():
+            if b >= -1e-9 or a <= crit:
+                # no gradient, or already below critical at the surface: in
+                # the first case there is no floor, and in the second the
+                # animal would not be here at all, so do not pretend to
+                # squeeze it into a metre of water
+                floors[k] = Z_MAX
+            else:
+                floors[k] = max(O2_FLOOR_MIN, min(Z_MAX, (crit - a) / b))
+        self._o2_floor = floors
+        z = (O2_CRIT_SHOWN - a) / b if b < -1e-9 else Z_MAX
+        self._o2_rule = z if O2_FLOOR_MIN <= z < Z_MAX * 0.94 else None
 
     def _mix_nitrogen(self, dt, mld, mixing):
         nb = max(1, min(NBINS, int(mld / BIN_M) + 1))
@@ -2405,15 +2716,23 @@ class Ecosystem:
         env = self.env
         t = self.t + self._acc
         zpx = (H - TOP_M - BOT_M) / Z_MAX
+        # current(t, z) == current_scale(t) * shear(z), exactly. The scale is
+        # the expensive half and it is the same for everything in the panel.
+        u = env.current_scale(t) * dt
+        kz = -1.0 / SHEAR_Z
+        exp = math.exp
         for a in self.agents:
-            a.x = (a.x + env.current(t, a.z) * dt) % W
+            a.x = (a.x + u * (0.30 + 0.70 * exp(a.z * kz))) % W
         for d in self.det:
-            d.x = (d.x + env.current(t, d.z) * dt) % W
+            d.x = (d.x + u * (0.30 + 0.70 * exp(d.z * kz))) % W
+        # snow rides a little slower: it is small, and a body of water that
+        # all moved at exactly one speed would read as a slide
+        us = u * 0.7
         for s in self.snow:
-            # snow rides a little slower: it is small, and a body of water
-            # that all moved at exactly one speed would read as a slide
-            s[0] = (s[0] + env.current(t, max(0.0, (s[1] - TOP_M) / zpx))
-                    * dt * 0.7) % W
+            z = (s[1] - TOP_M) / zpx
+            if z < 0.0:
+                z = 0.0
+            s[0] = (s[0] + us * (0.30 + 0.70 * exp(z * kz))) % W
 
     def _swim(self, dt):
         """Move the motile ones at their own speed, and turn them to face it.
@@ -2432,6 +2751,7 @@ class Ecosystem:
         zpx = (H - TOP_M - BOT_M) / Z_MAX
         slow = max(1e-3, self.swim_scale)     # the slow-motion factor
         body_k = 1.0 - math.exp(-dt_s / BODY_TAU)
+        floors = self._o2_floor
         for a in self.agents:
             k = a.g.kind
             bl = SWIM_BL.get(k)
@@ -2460,6 +2780,8 @@ class Ecosystem:
                 a.ang = a.head + math.pi
                 a.x += rng.gauss(0.0, step) * 0.7071
                 a.z += rng.gauss(0.0, step) * 0.7071 * 0.25 / zpx
+                a.x %= W
+                a.z = max(0.4, min(floors.get(k, Z_MAX) - 0.4, a.z))
                 continue
 
             # --- the intended course wanders, slowly ---------------------
@@ -2517,7 +2839,62 @@ class Ecosystem:
             # Calanus become none and stay that way for some time", which is
             # exactly what it was.
             a.x %= W
-            a.z = max(0.4, min(Z_MAX - 0.4, a.z))
+            # The oxygen floor has to be enforced here as well as in the
+            # migration, for the same reason the wrap does: the migration is
+            # hourly and swimming is every frame, so between ticks a copepod
+            # can simply swim down through a boundary that the ecology thinks
+            # it is holding.
+            a.z = max(0.4, min(floors.get(k, Z_MAX) - 0.4, a.z))
+
+    def _luminesce(self, dt_s):
+        """Who flashed, this frame.
+
+        Costs nothing for two thirds of every day, because the first line
+        returns. At night it is the luminous cells against the swimmers --
+        four against seven, typically -- which is the only place in the model
+        where anything looks at anything else's position on the frame path,
+        and is affordable precisely because both lists are tiny.
+
+        Note that dt_s is REAL seconds, not simulated ones. A flash has to
+        last about a second of the viewer's time whether the panel is running
+        at one to one or at a year a minute; it is an event in the room, not
+        an event in the ocean."""
+        if self._night <= 0.0 or dt_s <= 0.0:
+            return
+        lum = []
+        swim = []
+        for a in self.agents:
+            k = a.g.kind
+            if k in HET_KINDS:
+                swim.append(a)
+            if k in LUMINOUS and a.vis > 0.3:
+                lum.append(a)
+        if not lum:
+            return
+        rng = self.rng
+        now = self.real_t
+        zpx = (H - TOP_M - BOT_M) / Z_MAX
+        near2 = FLASH_NEAR * FLASH_NEAR
+        turb = TURB_FLASH_HZ * self._mixing
+        for a in lum:
+            if now - a.flash < FLASH_S * 1.6:
+                continue                       # still lit, or just recovered
+            k = a.g.kind
+            rate = turb + (KRILL_FLASH_HZ if k == KRILL else 0.0)
+            for s in swim:
+                if s is a:
+                    continue
+                dx = abs(s.x - a.x)
+                if dx > FLASH_NEAR:
+                    dx = W - dx                # the panel is a cylinder
+                    if dx > FLASH_NEAR:
+                        continue
+                dy = (s.z - a.z) * zpx
+                if dx * dx + dy * dy < near2:
+                    rate += FLASH_NEAR_HZ
+                    break
+            if rng.random() < rate * LUMINOUS[k] * self._night * dt_s:
+                a.flash = now
 
     def _step_pico(self, dt, surface, chl, t):
         """Picoplankton, as a scalar field. Monod on the same nitrogen the
@@ -2676,8 +3053,10 @@ class Ecosystem:
             for _ in range(n):
                 self.step(chunk, swim=False)
             self._acc = 0.0
-        self._swim(dt_days)
+        before = self.real_t
+        self._swim(dt_days)          # which is also what advances real_t
         self._drift(dt_days)
+        self._luminesce(self.real_t - before)
         if self.real_t >= self._restock_at:
             self._restock_at = self.real_t + self.RESTOCK_S
             self._restock()
@@ -2694,10 +3073,16 @@ class Ecosystem:
         surface = env.surface_light(t)
         self._deep_n = env.deep_nitrate(t)
         self._iron = env.iron(t)
+        self._update_oxygen(t)
         mld = env.mixed_layer_depth(t)
         mixing = env.mixing(t)
+        self._mixing = mixing
         chl = self.biomass / MAX_PHYTO
         daylight = min(1.0, surface / 0.20)
+        # The circadian gate, sampled off the real sun. Fully open below
+        # 0.4 * NIGHT_I so that dusk is a transition and not a switch, and
+        # firmly shut at noon in any latitude the ship can reach.
+        self._night = min(1.0, max(0.0, (NIGHT_I - surface) / (0.6 * NIGHT_I)))
 
         self._mix_nitrogen(dt, mld, mixing)
         self._step_pico(dt, surface, chl, t)
@@ -2740,7 +3125,6 @@ class Ecosystem:
             a.x += rng.gauss(0, 26.0 * turb) * dt
             a.z += rng.gauss(0, 30.0 * turb) * dt
             a.age += dt
-            a.flash = max(0.0, a.flash - dt * 6.0)
             if a.doomed:
                 a.vis -= dt / DIE_D
             else:
@@ -2824,9 +3208,13 @@ class Ecosystem:
                 a.z += (0.4 + 3.6 * (1.0 - a.vigour)) * d[2] * dt
 
             if a.mass > 1.9 and n_drift + len(born) < MAX_PHYTO:
+                # The ring that used to be drawn here said "this cell just
+                # divided". It is gone, because the ring now means light, and
+                # one glyph carrying two unrelated meanings is worse than
+                # losing the quieter of them -- a division is already visible
+                # as two cells where there was one.
                 a.mass *= 0.5
                 a.age = 0.0
-                a.flash = 1.0
                 born.append(a)
             if a.z > Z_MAX or a.mass < 0.16 or a.age > 55:
                 self._die(a)
@@ -2834,14 +3222,20 @@ class Ecosystem:
         # ---- heterotrophs -------------------------------------------------
         for a in hets:
             k = a.g.kind
+            floor = self._o2_floor.get(k, Z_MAX)
             if k in MIGRATORS:
                 # diel vertical migration, with individual variation so they
                 # do not sweep up and down as one rigid block. Copepods and
                 # krill both do it; ciliates and salps do not.
-                target = 7.0 + 14.0 * a.g.curl + 34.0 * daylight
+                #
+                # The daytime descent is the half of it that oxygen can take
+                # away. Off Peru this line is the difference between a
+                # copepod spending the daylight hours at fifty metres and
+                # spending them at thirty-eight, in full view.
+                target = min(7.0 + 14.0 * a.g.curl + 34.0 * daylight, floor)
                 a.z += (target - a.z) * min(1.0, 2.2 * dt)
             else:
-                target = 9.0 + 24.0 * (0.5 + 0.5 * a.g.curl)
+                target = min(9.0 + 24.0 * (0.5 + 0.5 * a.g.curl), floor)
                 a.z += (target - a.z) * min(1.0, 0.5 * dt)
             # Grazers get the thermal niche the drifters have always had.
             # Without it a krill with a 4 C optimum fed happily in 28 C water
@@ -2902,7 +3296,21 @@ class Ecosystem:
         self._advect(dt, t)
         self._enforce_cap()
         nz = sum(1 for a in self.agents if a.g.kind in HET_KINDS)
-        if nz < MAX_ZOO:
+        # Grazer arrivals follow the water too, and this became necessary the
+        # moment the drifter floor came down to four. A gyre panel carrying
+        # four cells and seven grazers is an inverted pyramid: the Holling
+        # term correctly refuses to let them feed, so they starve, and the
+        # unconditional reseed above put them straight back -- a permanent
+        # churn of copepods arriving to die.
+        #
+        # The exponent is gentler than the drifters' because grazer abundance
+        # really does vary less than phytoplankton abundance: a food chain
+        # damps as it goes up, and the standing stock of animals in the
+        # oligotrophic Pacific is perhaps a tenth of a coastal bloom's, not a
+        # hundredth.
+        nz_target = max(1, min(MAX_ZOO, int(round(
+            MAX_ZOO * (self._n_target / float(MAX_PHYTO)) ** 0.6))))
+        if nz < nz_target:
             if rng.random() < 1.2 * dt:
                 self._spawn_het(self._seed_het())
                 nz += 1
@@ -3037,12 +3445,27 @@ _STIPPLE = None
 
 def _stipple_points():
     """A fixed point set with fixed ranks. Reusing it every frame means the
-    chemoautotroph haze changes density without shimmering."""
+    chemoautotroph haze changes density without shimmering.
+
+    The depth bin is baked in at build time. It is a function of y alone and
+    y never changes, so recomputing it eleven hundred times a frame was
+    eleven hundred integer divisions to arrive at the same answer as last
+    frame -- and the whole point of the fixed point set is that the answer IS
+    the same as last frame."""
     global _STIPPLE
     if _STIPPLE is None:
         r = random.Random(20260726)
-        _STIPPLE = [(r.randrange(9, W - 9), r.randrange(TOP_M + 2, H - BOT_M - 2),
-                     r.random()) for _ in range(1100)]
+        zpx = (H - TOP_M - BOT_M) / Z_MAX
+        pts = []
+        for _ in range(1100):
+            x = r.randrange(9, W - 9)
+            y = r.randrange(TOP_M + 2, H - BOT_M - 2)
+            i = min(NBINS - 1, max(0, int(((y - TOP_M) / zpx) / BIN_M)))
+            pts.append((x, y, r.random(), i))
+        # sorted by bin, so the render loop can take the threshold once per
+        # bin instead of once per point
+        pts.sort(key=lambda p: p[3])
+        _STIPPLE = tuple(pts)
     return _STIPPLE
 
 
@@ -3057,16 +3480,25 @@ def render(eco, canvas, view=DEFAULT_VIEW, track=None, day=None):
     # drawn as a stipple whose density follows the nitrifier population.
     # They fill the deep water that used to be dead space.
     if view.chemo:
-        for (x, y, rank) in _stipple_points():
-            i = min(NBINS - 1, max(0, int(((y - TOP_M) / zpx) / BIN_M)))
-            if rank < eco.nit[i] * 0.30 + eco.pico[i] * 0.28:
-                canvas.px(x, y)
+        px = canvas.px
+        nit = eco.nit
+        pico = eco.pico
+        bin_i = -1
+        thr = 0.0
+        for (x, y, rank, i) in _stipple_points():
+            if i != bin_i:
+                bin_i = i
+                thr = nit[i] * 0.30 + pico[i] * 0.28
+            if rank < thr:
+                px(x, y)
 
     if view.snow:
+        px = canvas.px
         for s in eco.snow:
-            canvas.px(int(s[0]), int(s[1]))
+            x = int(s[0]); y = int(s[1])
+            px(x, y)
             if s[3]:
-                canvas.px(int(s[0]) + 1, int(s[1]))
+                px(x + 1, y)
 
     for d in eco.det:
         y = depth_to_y(d.z)
@@ -3081,20 +3513,80 @@ def render(eco, canvas, view=DEFAULT_VIEW, track=None, day=None):
             continue
         y = depth_to_y(a.z)
         ext = EXTENT[a.g.kind] * r
-        # draw across the seam so nothing teleports when it wraps
-        for xoff in (0.0, -W, W):
-            xx = a.x + xoff
-            if xx + ext < 0 or xx - ext > W:
-                continue
-            if a.g.kind == COPEPOD:
-                draw_copepod(canvas, xx, y, r, a.ang, a.g, a.gravid)
+        # Draw across the seam so nothing teleports when it wraps -- but only
+        # for the handful of cells actually straddling it. This used to try
+        # all three offsets for every cell and reject two of them, which is
+        # two thirds of the draw loop's iterations spent on a comparison.
+        if a.x < ext:
+            xs = (a.x, a.x + W)
+        elif a.x > W - ext:
+            xs = (a.x, a.x - W)
+        else:
+            xs = (a.x,)
+        for xx in xs:
+            k = a.g.kind
+            if k == COPEPOD:
+                draw_copepod(canvas, xx, y, r, a.ang, a.g, a.gravid, a.phase)
+            elif k in PHASED:
+                DRAW[k](canvas, xx, y, r, a.ang, a.g, a.phase)
             else:
-                DRAW[a.g.kind](canvas, xx, y, r, a.ang, a.g)
-            if a.flash > 0.25:
-                canvas.circle(xx, y, r * 1.9)
+                DRAW[k](canvas, xx, y, r, a.ang, a.g)
+
+    draw_flashes(eco, canvas)
 
     if view.plate:
+        draw_oxygen_rule(eco, canvas)
         draw_plate(eco, canvas, track, day)
+
+
+def draw_flashes(eco, c):
+    """Drawn after every organism, so a flash sits on top of whatever set it
+    off rather than being overdrawn by it.
+
+    An expanding ring that thins as it grows. A filled disc was the first
+    attempt and it read as a blot; a fixed ring read as a diagram. What a
+    flash actually looks like from a few metres away is a small thing
+    briefly becoming a larger, fainter thing, which on one bit is a circle
+    getting wider and losing pixels."""
+    now = eco.real_t
+    for a in eco.agents:
+        u = (now - a.flash) / FLASH_S
+        if not 0.0 <= u < 1.0:
+            continue
+        r = visual_radius(a)
+        rr = r * (FLASH_R0 + (FLASH_R1 - FLASH_R0) * u)
+        y = depth_to_y(a.z)
+        for xoff in (0.0, -W, W):
+            xx = a.x + xoff
+            if xx + rr < 0 or xx - rr > W:
+                continue
+            c.faint_circle(xx, y, rr, (1.0 - u) ** 0.7)
+
+
+def draw_oxygen_rule(eco, c):
+    """A dotted rule where the water stops being breathable.
+
+    Drawn on exactly one stretch of one voyage. For a thousand days there is
+    nothing here, and then the ship turns north out of the Strait of Magellan
+    and a line appears across the panel with every animal above it. That
+    rarity is the whole value of it: a piece that showed you something every
+    day would be showing you a decoration."""
+    z = eco._o2_rule
+    if z is None:
+        return
+    y = int(depth_to_y(z))
+    if not TOP_M + 6 < y < H - BOT_M - 6:
+        return
+    for x in range(6, W - 6, 4):
+        c.px(x, y)
+    s = "LOW O2"
+    tw, th = text_width(s), text_height()
+    x0 = W - 8 - tw
+    # A chain diatom drifting across the label made it unreadable the first
+    # time this was drawn. Clearing behind it costs nothing on paper this
+    # empty and is what the footer already does.
+    c.clear_rect(x0 - 3, y - th - 6, tw + 6, th + 5)
+    text(c, x0, y - th - 3, s)
 
 
 def draw_plate(eco, c, track=None, day=None):

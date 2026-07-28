@@ -12,6 +12,8 @@ Inputs, all public domain or CC-BY, all downloaded once and thrown away:
                 CC-BY-4.0, 6 MB.  https://www.seanoe.org/data/00870/98226/
     n13..n16.nc World Ocean Atlas 2023 nitrate, seasonal, 1 deg, ~24 MB each
                 https://www.ncei.noaa.gov/access/world-ocean-atlas-2023/
+    o00.nc      World Ocean Atlas 2023 dissolved oxygen, annual, 1 deg, 75 MB
+                .../DATA/oxygen/netcdf/all/1.00/woa23_all_o00_01.nc
 
 Output: a 2 x 2 degree global grid, 180 x 90 cells, several fields, uint8.
 
@@ -68,6 +70,30 @@ Format, little-endian:
         no3       4 steps     0 .. 40 mmol/m3    255 = land
         shelf     1 step      distance to coast, 0..2000 km
         iron      1 step      0 = scarce .. 255 = replete
+    version 2 appends, after all of the above:
+        o2_surf   1 step      dissolved O2 at   0 m, 0..420 umol/kg
+        o2_deep   1 step      dissolved O2 at  50 m, 0..420 umol/kg
+
+WHY TWO OXYGEN LEVELS AND NOT A PROFILE
+    The panel is a window on the top 55 m of the sea, and inside that window
+    the oxygen profile is very close to a straight line -- everywhere, not
+    just in the easy places. Measured against WOA23 at the hardest site on
+    the whole voyage, the Peru margin off Callao, a line through 0 m and
+    50 m predicts 30 m to within 7 umol/kg and 55 m to within 5. Two anchors
+    is therefore not an approximation of a profile, it IS the profile over
+    the range that gets drawn, and it costs 32 kB instead of 1.6 MB.
+
+    The reason to carry it at all is the eastern tropical Pacific. In the
+    South Pacific gyre, oxygen at 50 m is 232 umol/kg; off Callao it is 125
+    and falling by 2 umol/kg per metre. That is the shallowest oxygen
+    minimum zone in the world ocean, it sits directly on Drake's track up
+    the coast of Peru, and it is the one place where the water has a floor
+    to it that an animal can feel.
+
+    Annual, not seasonal. The OMZ cores are permanent features maintained by
+    circulation and respiration, not a season; the seasonal WOA oxygen
+    fields would cost 4x for a signal that is small compared with the
+    difference between the gyre and the Humboldt.
 """
 
 import math
@@ -84,6 +110,13 @@ SST_LO, SST_HI = -2.0, 34.0
 MLD_LO, MLD_HI = 5.0, 600.0          # quantised in log space, see note
 NO3_LO, NO3_HI = 0.0, 40.0
 SHELF_MAX = 2000.0                   # km, saturates
+O2_LO, O2_HI = 0.0, 420.0            # umol/kg. 340 would have been enough for
+                                     # every track, and clipped a tenth of the
+                                     # world ocean -- WOA reaches 435 under the
+                                     # Canadian Arctic ice. 420 clips nothing
+                                     # and still resolves 1.65 umol/kg a code,
+                                     # against a signal that spans 25 to 420
+O2_LEVELS = (0.0, 50.0)              # the two depths sampled, metres
 
 
 def lon_of(i):
@@ -215,6 +248,20 @@ def load_no3(paths):
     return out
 
 
+def load_o2(path):
+    """Dissolved oxygen at the two anchor depths. o_an is the objectively
+    analysed annual mean, in umol/kg; both 0 and 50 m are WOA standard
+    levels, so nothing is interpolated here."""
+    import xarray as xr
+    ds = xr.open_dataset(path, decode_times=False)
+    out = []
+    for z in O2_LEVELS:
+        da = ds["o_an"].isel(time=0).sel(depth=z, method="nearest")
+        out.append(regrid(da, "lon", "lat"))
+    ds.close()
+    return out
+
+
 def load_shelf(coast_path):
     """Great-circle distance from each cell centre to the nearest coastline
     vertex. Brute force: 16,200 cells against 14,447 points is 234 million
@@ -284,6 +331,7 @@ def build(src, dst, coast="data/coast.bin"):
     sst = load_sst(os.path.join(src, "sst.nc"))
     mld = load_mld(os.path.join(src, "mld.nc"))
     no3 = load_no3([os.path.join(src, "n%d.nc" % k) for k in (13, 14, 15, 16)])
+    o2 = load_o2(os.path.join(src, "o00.nc"))
     shelf = load_shelf(coast)
     iron = load_iron(shelf)
 
@@ -297,9 +345,13 @@ def build(src, dst, coast="data/coast.bin"):
     sst = [fill_gaps(g, ocean) for g in sst]
     mld = [fill_gaps(g, ocean) for g in mld]
     no3 = [fill_gaps(g, ocean) for g in no3]
+    # WOA's own land mask is coarser than the SST one and cuts the Peru and
+    # Benguela margins off a cell early -- exactly the cells that matter --
+    # so oxygen gets the same neighbour fill as everything else.
+    o2 = [fill_gaps(g, ocean) for g in o2]
 
     blob = bytearray(b"DRFO")
-    blob += struct.pack("<BBBBB", 1, NLON, NLAT, NMON, NSEA)
+    blob += struct.pack("<BBBBB", 2, NLON, NLAT, NMON, NSEA)
 
     def emit(grid, fn, lo, hi):
         for j in range(NLAT):
@@ -318,6 +370,11 @@ def build(src, dst, coast="data/coast.bin"):
     for j in range(NLAT):
         for i in range(NLON):
             blob.append(q(iron[j, i], 0.0, 1.0))
+    # --- version 2 appends here, after every v1 offset, so that a v1 reader
+    # pointed at a v2 file still finds all five of its fields where it
+    # expects them. Only the length check and the version byte move.
+    for g in o2:
+        emit(g, q, O2_LO, O2_HI)
 
     with open(dst, "wb") as f:
         f.write(blob)
@@ -328,7 +385,8 @@ def build(src, dst, coast="data/coast.bin"):
     for name, g in (("sst  Jan", sst[0]), ("sst  Jul", sst[6]),
                     ("mld  Jan", mld[0]), ("mld  Jul", mld[6]),
                     ("no3  DJF", no3[0]), ("no3  JJA", no3[2]),
-                    ("shelf", shelf), ("iron", iron)):
+                    ("shelf", shelf), ("iron", iron),
+                    ("o2    0m", o2[0]), ("o2   50m", o2[1])):
         v = g[ocean]
         v = v[np.isfinite(v)]
         print("  %-9s min %8.2f  median %8.2f  max %8.2f"

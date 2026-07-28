@@ -31,32 +31,46 @@ SST_LO, SST_HI = -2.0, 34.0
 MLD_LO, MLD_HI = 5.0, 600.0
 NO3_LO, NO3_HI = 0.0, 40.0
 SHELF_MAX = 2000.0
+O2_LO, O2_HI = 0.0, 420.0
+O2_Z0, O2_Z1 = 0.0, 50.0             # the two depths the file carries
 
-SST, MLD, NO3, SHELF, IRON = range(5)
+SST, MLD, NO3, SHELF, IRON, O2S, O2D = range(7)
+
+# version 2 added oxygen by APPENDING after every version 1 field, so the
+# offsets of the first five are identical in both and a v1 file just stops
+# short. Which is the whole point: adding a field must not invalidate a
+# panel already carrying a v1 blob in flash.
+V1_FIELDS = (SST, MLD, NO3, SHELF, IRON)
+V2_FIELDS = (O2S, O2D)
 
 
 class Ocean:
-    __slots__ = ("b", "nlon", "nlat", "nmon", "nsea", "base", "n", "_ocean")
+    __slots__ = ("b", "ver", "nlon", "nlat", "nmon", "nsea", "base", "n",
+                 "_ocean")
 
     def __init__(self, path="data/ocean.bin"):
         with open(path, "rb") as f:
             self.b = f.read()
         if self.b[:4] != b"DRFO":
             raise ValueError("not an ocean file: %r" % self.b[:4])
-        ver, self.nlon, self.nlat, self.nmon, self.nsea = struct.unpack_from(
-            "<BBBBB", self.b, 4)
-        if ver != 1:
-            raise ValueError("ocean.bin version %d, expected 1" % ver)
+        self.ver, self.nlon, self.nlat, self.nmon, self.nsea = \
+            struct.unpack_from("<BBBBB", self.b, 4)
+        if self.ver not in (1, 2):
+            raise ValueError("ocean.bin version %d, expected 1 or 2" % self.ver)
         self.n = self.nlon * self.nlat
         o = 9
         # byte offset of step 0 of each field
         self.base = {}
-        for field, steps in ((SST, self.nmon), (MLD, self.nmon),
-                             (NO3, self.nsea), (SHELF, 1), (IRON, 1)):
+        layout = [(SST, self.nmon), (MLD, self.nmon), (NO3, self.nsea),
+                  (SHELF, 1), (IRON, 1)]
+        if self.ver >= 2:
+            layout += [(O2S, 1), (O2D, 1)]
+        for field, steps in layout:
             self.base[field] = o
             o += steps * self.n
         if o != len(self.b):
-            raise ValueError("ocean.bin is %d bytes, expected %d" % (len(self.b), o))
+            raise ValueError("ocean.bin is %d bytes, expected %d for v%d"
+                             % (len(self.b), o, self.ver))
         # which cells are ocean, for the land search. One bit each would do on
         # the MCU; here a tuple of bools is clearer and costs 2.6 kB.
         s0 = self.base[SST]
@@ -165,6 +179,29 @@ class Ocean:
     def shelf_km(self, lat, lon):
         v = self._static(SHELF, lat, lon)
         return SHELF_MAX if v is None else (v / 254.0) * SHELF_MAX
+
+    def oxygen(self, lat, lon, z):
+        """Dissolved oxygen in umol/kg at depth z, or None on a v1 file.
+
+        Linear between the two carried levels, and linear on out below the
+        lower one -- which sounds cavalier and is not, because the panel only
+        ever asks about the top 55 m and the second anchor is at 50. Checked
+        against the full WOA profile at the worst site on the track, the Peru
+        margin off Callao: this returns 115 umol/kg at 55 m where the
+        43-level profile says 110.
+
+        Above 50 m it is an interpolation and below it a five-metre
+        extrapolation, and the oxycline is straight through both."""
+        if self.ver < 2:
+            return None
+        a = self._static(O2S, lat, lon)
+        b = self._static(O2D, lat, lon)
+        if a is None or b is None:
+            return None
+        a = O2_LO + (a / 254.0) * (O2_HI - O2_LO)
+        b = O2_LO + (b / 254.0) * (O2_HI - O2_LO)
+        f = (z - O2_Z0) / (O2_Z1 - O2_Z0)
+        return max(0.0, a + (b - a) * f)
 
     def iron(self, lat, lon):
         """0..1 ceiling, applied by Liebig's law of the minimum against the

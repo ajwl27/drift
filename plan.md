@@ -1029,6 +1029,314 @@ Ranked by probability × damage.
 
 ---
 
+## 10q. Night, the oxygen minimum zone, the range the panel was throwing away — and half the frame cost
+
+Four things in this pass. Three are yours; the fourth is that the whole thing
+now runs in about half the time it did, which matters because the frame cost
+is the battery.
+
+### The abundance range — **the panel was compressing a hundredfold into three**
+
+Start with the measurement, because it is the whole argument.
+
+`n_visible = CAP_SCALE * capacity ** CAP_EXP`, floored at `N_FLOOR` and capped
+at `MAX_PHYTO`. Capacity is the model's own estimate of what a patch of water
+can carry, and over Drake's whole track it looks like this:
+
+| percentile | capacity | old n | new n |
+|---|---|---|---|
+| p1 | 0.17 | **9** (floor) | 4 |
+| p5 | 0.22 | **9** (floor) | 4 |
+| p25 | 0.54 | 10 | 7 |
+| p50 | 1.76 | 17 | 13 |
+| p75 | 7.05 | **30** (cap) | 27 |
+| p95 | 14.25 | **30** (cap) | 40 |
+| p100 | 16.62 | **30** (cap) | 42 |
+
+The old settings spent **30% of the voyage on the floor and another 30% on
+the cap.** Two thirds of the days were showing one of two numbers. So the
+South Pacific gyre, which is as close to a desert as the sea gets, and the
+Patagonian shelf in spring, which is one of the richest patches of water on
+Earth, arrived on the panel as nine cells and thirty — a difference of three
+and a bit standing in for a difference of a hundred.
+
+The new four numbers are **solved, not chosen**: fix the fifth percentile of
+capacity at 4 cells and the ninety-fifth at 40, and the exponent and scale
+follow from the two-point fit. `N_FLOOR = 4`, `MAX_PHYTO = 42`,
+`CAP_EXP = 0.55`, `CAP_SCALE = 9.3`. That spends 2% of the voyage on the floor
+and 8% on the cap.
+
+Measured contrast, median cells drawn, four seeds:
+
+| | old | new |
+|---|---|---|
+| Patagonian shelf (days 180–270) | 35.5 | 41.0 |
+| oligotrophic Pacific (600–680) | 19.5 | 14.0 |
+| **ratio** | **1.81x** | **3.04x** |
+
+Satellite chlorophyll says the true ratio is about thirtyfold. Three is not
+thirty and is not trying to be — but it is not two either, and two was not
+enough to tell you which ocean you were in.
+
+**The floor of 4 is the part that took nerve and is the part that is right.**
+A gyre panel with four large cells on it looks nearly empty because an
+oligotrophic gyre *is* nearly empty. The picoplankton stipple and the marine
+snow are still there, which is also true, because in that water the
+picoplankton is essentially the whole standing stock.
+
+Grazer arrivals had to follow, and that was not foreseen. A panel carrying
+four cells and seven grazers is an inverted pyramid: the Holling term
+correctly refuses to let them feed, so they starve, and the unconditional
+reseed put them straight back — a permanent churn of copepods arriving to die.
+The grazer target now scales as `(n_target / MAX_PHYTO) ** 0.6`, a gentler
+exponent than the drifters' because a food chain damps as it goes up.
+
+#### What it cost, and what it bought
+
+Two things moved that were not asked for, and both are worth writing down.
+
+**Effective types per panel fell from 5.09 to 3.82.** That is arithmetic, not
+regression: you cannot have five effective types on a panel carrying four
+cells. Still well clear of the 2.60 threshold.
+
+**The satellite correlation improved.** Model biomass against MODIS
+chlorophyll along the track, same four seeds, same reference:
+**rho +0.445 → +0.547** (+0.532 on the final code). Compressing the range was
+throwing away real signal.
+(The +0.68 quoted in §10c is from a different and larger sample and is not
+comparable to either of these.)
+
+One existing check went red and was **re-baselined on the evidence, not to
+make it green**: "the Patagonian shelf is productive", diatom share, 46.2% →
+42.5% against a 45% threshold, on a metric whose per-seed spread is 38–67% in
+both models. Raising the cap means a shelf bloom is no longer culled down to
+thirty, so the types that lose to diatoms are no longer culled out of
+existence alongside them. A shelf bloom that is 42% diatoms and 58%
+everything else is not a model that has stopped understanding the Patagonian
+shelf.
+
+**And then it came back on its own.** The efficiency work below changed the
+order of two floating-point multiplies in `current()`, which over 185
+simulated days is enough to put the model on a different trajectory. Re-run on
+the final code, the same four seeds give **48.8%** on that test, range
+44.2–58.7 — comfortably past the *old* 45% threshold. Which is the clearest
+possible demonstration that 42.5 against 45 was the weather and not the
+climate, and that the test needed replacing rather than tightening.
+
+The threshold moved to 38% **and a better test was added in its place**: the
+contrast block above is now asserted directly, at a floor of 2.2x. The old
+model fails it at 1.81x. Every test in that file asks about composition, and
+composition is the harder question, so it is where the attention went — but
+the first thing anyone sees on the panel is not which diatom won, it is
+whether the water is full or empty, and that had no test at all. Which is how
+it came to spend two thirds of the voyage pinned against a limit without
+anything complaining.
+
+### The oxygen minimum zone — **the one place the water has a floor**
+
+`ocean.bin` is now version 2, carrying WOA23 annual dissolved oxygen at 0 m
+and 50 m. Version 2 **appends after every version 1 field**, so the offsets of
+the first five are byte-identical and a panel already carrying a v1 blob in
+flash still reads it. That pattern came from the `fish` branch, which is the
+one thing from that experiment that came straight back.
+
+Two levels and not a profile, because inside the top 55 m the oxygen profile
+is very close to a straight line everywhere. Checked at the hardest site on
+the voyage, the Peru margin off Callao: a line through 0 and 50 m predicts
+30 m to within 7 µmol/kg and 55 m to within 5, against the 43-level WOA
+profile. Two anchors is not an approximation of a profile, it *is* the profile
+over the range that gets drawn, and it costs 32 kB instead of 1.6 MB.
+
+What it buys, at 55 m — the bottom of the panel:
+
+| | O₂ at 55 m |
+|---|---|
+| Drake Passage | 322 |
+| North Atlantic 45N | 250 |
+| South Pacific gyre | 233 |
+| Benguela | 215 |
+| Callao, Peru | **114** |
+| Peru 8S | **81** |
+
+That is the shallowest oxygen minimum zone in the world ocean and it sits
+directly on Drake's track up the coast.
+
+**The mechanism is habitat compression, not death.** Large active swimmers
+have the highest critical oxygen partial pressure — they run the biggest
+oxygen debt per gram and are excluded first — so their daytime descent stops
+where the water can no longer support them instead of continuing into the
+dark. Off Peru that is the difference between a copepod spending the daylight
+hours at fifty metres and spending them at thirty-eight, in full view.
+
+`O2_CRIT = {KRILL: 165, COPEPOD: 145, SALP: 125}` µmol/kg. The **ordering** is
+what has evidence behind it (Childress & Seibel 1998; Seibel 2011 on critical
+PO₂ scaling with activity and size; Wishner et al. 2013 on faunal boundaries
+at the Peru and ETNP oxyclines). The absolute numbers are **calibrated, not
+measured**: set so the boundary lands where the literature puts it off Callao
+and so that *nothing* is affected anywhere else on any track. A threshold that
+changed behaviour in the Atlantic would be a bug. Protists are absent from the
+table on purpose — some ciliates and foraminifera live in the OMZ core, and
+giving them a ceiling would be inventing an effect to make the picture busier.
+
+Where it fires, over 1018 days: **116 of them, 11%.** Day 36 off Cape Blanco
+(the Mauritanian upwelling); days 420–500, the entire run up from Chile
+through Peru and Panama to Mexico, with the floor down to 21 m off Costa Rica;
+days 952–964 on the homeward leg past Cape Verde. Nothing anywhere else. That
+map was not aimed at — it is what a threshold on the real field produces — and
+it is the correct one.
+
+A dotted rule marks it, labelled `LOW O2`, drawn only when the boundary is
+inside the panel. **The rarity is the value.** A piece that showed you
+something every day would be showing you a decoration.
+
+### Night — **the sea flashes when you disturb it**
+
+Until now the panel did not know what time of night it was. Light drove
+photosynthesis and the copepods went up and down, and that was the whole diel
+cycle: at three in the morning the piece looked like the piece.
+
+Three facts do the work, and each is why one constant exists.
+
+1. **It is mechanically triggered.** Dinoflagellate luminescence is a response
+   to shear — a predator's approach, a breaking wave — not a lamp left on. So
+   flashes are fired by something passing close, and by turbulence, and never
+   spontaneously in still water.
+2. **It is under a circadian clock.** *Lingulodinium* is the textbook case:
+   stimulate the same culture at noon and at midnight and you get two orders
+   of magnitude difference in light, from the cell's own clock and not from
+   the stimulus. So the gate is on the sun rather than on a rule about hours,
+   which means it follows the ship into the polar summer and correctly gives
+   up.
+3. **It is fast.** A real flash is about a tenth of a second. `FLASH_S = 0.85`
+   real seconds is nearly ten times longer and is a deliberate lie: at twenty
+   frames a second a true flash would occupy two frames and read as a
+   rendering fault. It is the one number here chosen for the eye rather than
+   from the literature.
+
+Krill are in the table for a different reason — they have actual photophores
+and signal with them rather than only startling — so they get a slow
+spontaneous rate instead of needing to be frightened.
+
+Drawn as an **expanding ring that thins as it grows**, through the same
+ordered dither the text uses. A filled disc read as a blot; a fixed ring read
+as a diagram. What a flash looks like from a few metres away is a small thing
+briefly becoming a larger, fainter thing, which on one bit is a circle getting
+wider and losing pixels.
+
+Measured across the diel cycle at Peru, twenty frames a second for two
+minutes: **0 flashes at noon and at six in the evening, 45 at midnight, 74 at
+06:00** (still dark at that latitude and season). The gate works.
+
+The old `a.flash` — a ring meaning "this cell just divided" — is **deleted**,
+not repurposed alongside. One glyph carrying two unrelated meanings is worse
+than losing the quieter of them, and a division is already visible as two
+cells where there was one.
+
+### Half the frame cost
+
+`tools/bench.py` now exists so the two numbers `tools/power.py` depends on are
+a command rather than a memory.
+
+| | was | now |
+|---|---|---|
+| `eco.advance(dt)` | 0.102 ms | **0.046** |
+| water, median | 2.82 ms | **1.72** (bloom 2.14, gyre 1.12) |
+| map, mean of three | 15.4 ms | **8.0** (globe 9.95, chart 7.30) |
+| key plate | 1.72 ms | **1.70** |
+| **weighted over the hour** | 4.18 ms | **2.35** |
+
+None of it is clever. All of it is a thing being computed more times than it
+changes.
+
+**Glyphs are cached as rectangles.** Drawing a letter was thirty-five calls
+into `fill_rect` with a 5×7 bit test around them. A glyph is now a cached
+tuple of maximal rectangles — about fourteen — passed to one new primitive,
+`Canvas.rects`. The bit tests happen once ever, per character per size. This
+matters far more on the panel than on a laptop: over there the Canvas is C and
+everything calling it is Python, so what costs is the number of times Python
+crosses the boundary, and this cuts it by thirty.
+
+**The coastline is culled by bounding cap.** The map used to be a still —
+rendered once when the interlude began and held — which made nine thousand
+projections a frame a non-problem because there was one frame. It is not a
+still any more; it opens on the globe and travels in to the chart and back
+out. So the line data is cut into chunks of two dozen points, each carrying
+the smallest spherical cap that contains it: a unit vector and an angular
+radius, twenty bytes. A chunk is drawn only if its cap can reach the frame,
+which is one dot product. At chart scale that rejects nineteen chunks in
+twenty before a single point is touched. Verified **pixel-identical** to
+drawing everything, over nine views spanning the voyage.
+
+Then segments that land on the pixel they start from are skipped. The first
+version of that test allowed a whole pixel of drift instead, on the reasoning
+that a sub-pixel error cannot matter. **It cost a fifth of the ink on the
+globe**: every island small enough to fit inside the tolerance stopped being
+drawn at all. Bounded error is not the same as no error when the thing being
+drawn is smaller than the bound. Testing on the *pixel the point lands in*
+instead costs 581 differing pixels out of 68,000 across eighteen views — 1.7%
+at globe scale, nothing at chart scale, and no islands.
+
+**`current(t, z)` factorises.** It is a time term times a depth term, exactly,
+and advection asked for it once per particle per frame — a hundred and twenty
+times — while the time term is two trigonometric evaluations producing the
+identical number every one of those times. Now it is evaluated once and the
+per-particle cost is one exponential.
+
+**The stipple carries its own depth bin.** It is a function of y alone and y
+never changes, so recomputing it eleven hundred times a frame was eleven
+hundred integer divisions to arrive at last frame's answer. Sorted by bin as
+well, so the threshold is taken once per bin instead of once per point.
+
+**The seam is only drawn when something is on it.** The wrap-around pass tried
+three x-offsets for every cell and rejected two.
+
+Battery, on the ESP32-S3 with a custom board and light sleep, 4.2in panel at
+20 fps: **50 days → 83 days.**
+
+### Files
+
+Two you run: `drift.py` and `console.py`, which has moved to the top level
+from `tools/`. Deleted: `tools/tune.py`, `tools/swim_gif.py`,
+`tools/plot_gaits.py` — all three superseded by the console, and a tool you
+would not reach for is a tool that is lying about being maintained. Also gone:
+`FONT3` and the 3×5 glyph table under it, dead since the HUD was deleted.
+
+Added: `tools/bench.py` and `tools/look.py`. The second is six panels from six
+places on one sheet, which is the only test of the question every other tool
+in the directory cannot ask — does a gyre look like a gyre next to a shelf.
+
+Its first version asked for noon by writing `day + 0.5`, which off Peru at
+78°W is five in the morning. Every night panel came out in daylight and the
+bioluminescence looked broken when it was the captions that were wrong.
+
+### One thing found on the way past
+
+`python3 drift.py --stills` has been rendering **a biomass of exactly zero**.
+
+Not a regression from this pass — it is identical on the old constants — but a
+bug that outlived its reason. When arrivals moved into `_advect`, that method
+kept its `if self.track is None: return` guard, which had made sense when it
+only did flushing. So the no-track path lost its only source of
+phytoplankton, and the standalone seasonal-cycle mode has been showing four
+grazers on empty water ever since.
+
+Nothing caught it because every check in `tools/` runs the voyage. Water at
+anchor is not sterile; only the flush rate is zero. Fixed, and Melbourn now
+gives a proper spring bloom again — 20 cells on day 30, 32 by midsummer, 24 by
+late autumn.
+
+### Still open
+
+- `A_REF = 0.42` in `keyplate.py` is still a placeholder.
+- The map is 8.0 ms and a third of the render budget. If this ever has to last
+  longer, that is the number to attack — a decimated coastline for low zoom is
+  the obvious next move, and it costs an index list, not a second copy of the
+  data.
+- The OMZ affects animals only. Suppressed remineralisation below the
+  oxycline is real and would be invisible, which is why it is not here.
+
+---
+
 ## 10p. The ship's name, the date, and the hole in the water
 
 ### GOLDEN HIND, not DRAKE
@@ -1290,7 +1598,7 @@ against 23.
 
 ## 10n. The defaults, chosen by eye, and what they cost
 
-Everything below was set with `tools/console.py` and pasted back. That is what
+Everything below was set with `console.py` and pasted back. That is what
 the console is for, and it is worth recording that the values it produced are
 mostly a long way from the ones that were reasoned to.
 
@@ -1315,7 +1623,7 @@ it is a camera move has to be about this slow.
 The standalone `drift.py` picks all of this up, because the console only ever
 wrote to the same module constants the shipping file reads. `SCALE` is set to
 **0.9138**, which is true physical size for a 4.2in panel on a 27in 1440p
-monitor; the preview resamples rather than replicating, and `tools/console.py`
+monitor; the preview resamples rather than replicating, and `console.py`
 has the ruler that computes it for any other screen.
 
 ### Sway, applied to everything
@@ -2000,10 +2308,10 @@ drift."
 `tools/tune.py` answered one question at a time and answered it well: four
 panels, same seed, one parameter differing. But the parameters interact —
 swimming speed against turn persistence against body lag against frame rate —
-and four fixed panels cannot show an interaction. `tools/console.py` is the
+and four fixed panels cannot show an interaction. `console.py` is the
 whole thing on one screen.
 
-    python3 tools/console.py
+    python3 console.py
 
 ![the console](console.png)
 

@@ -2,9 +2,10 @@
 
 A generative plankton column for a 1-bit reflective panel.
 
-Renders at 240x400, one bit deep, no anti-aliasing — the exact resolution and
-bit depth of the target hardware — then upscales nearest-neighbour, so what
-you see on a laptop is what the panel will show.
+Renders at 300x400, one bit deep, no anti-aliasing — the exact resolution and
+bit depth of the target hardware (a 4.2in ST7305 reflective LCD) — then
+upscales nearest-neighbour, so what you see on a laptop is what the panel
+will show.
 
 ```
 pip install pygame numpy pillow
@@ -41,7 +42,8 @@ minutes.
 
 | | |
 |---|---|
-| `drift.py` | the ecosystem and the renderer. `Canvas` is the only part rewritten in C on the port; everything above it ports unchanged. |
+| `drift.py` | **the piece.** The ecosystem and the renderer. `Canvas` is the only part rewritten in C on the port; everything above it ports unchanged. |
+| `console.py` | **the development build.** Every constant in `drift.py` as a slider, live, with the panel next to it and the measured consequence underneath. Never ships. |
 | `voyage.py` | the voyages, as dated waypoint tables, great-circle interpolated. Pure functions of a day number. Adding one is a table and a `register()` call. |
 | `mapview.py` | orthographic chart, north up. |
 | `keyplate.py` | the key plate: a live census of what is in the water, plus voyage progress. |
@@ -50,6 +52,10 @@ minutes.
 | `tools/make_coast.py` | Natural Earth shapefile → the packed coastline in `data/`. |
 | `tools/make_ocean.py` | WOA23 / OISST / Ifremer netCDF → the packed ocean in `data/`. |
 | `tools/plot_track.py` | the ocean along the whole voyage, as a diagnostic plot. |
+| `tools/bench.py` | where the milliseconds go. Feeds the two measured constants in `tools/power.py`. |
+| `tools/look.py` | six panels from six places on one sheet — the only test of whether a gyre looks like a gyre. |
+| `tools/check_motion.py` | swimming speeds, drawn-body rotation per frame, and frame-rate independence. |
+| `tools/power.py` | battery life, per board and per panel, from measured frame cost. |
 | `tools/check_biogeography.py` | does the emergent composition match known biogeography? `run 5` to sweep five seeds and find out. |
 | `tools/make_card.py` | the printed card for the box: whole-track chart plus the facts and the caveats. |
 | `tools/make_landmask.py` | Natural Earth land polygons → a 0.1° bitmask, build-time only. |
@@ -63,9 +69,14 @@ minutes.
 split at the antimeridian, int16 centidegrees. 14,447 points in 59 kB.
 Natural Earth is public domain.
 
-`data/ocean.bin` — 2° global grid, uint8, 475 kB. Sea surface temperature and
-mixed layer depth at twelve monthly steps, nitrate at four seasonal steps,
-distance-to-coast and an iron ceiling as static fields.
+`data/ocean.bin` — 2° global grid, uint8, 506 kB, format version 2. Sea
+surface temperature and mixed layer depth at twelve monthly steps, nitrate at
+four seasonal steps, and distance-to-coast, an iron ceiling and dissolved
+oxygen at two depths as static fields.
+
+Version 2 appended the oxygen after every version 1 field, so the offsets of
+the first five are identical in both and a panel carrying a v1 blob still
+reads it.
 
 | field | source | licence |
 |---|---|---|
@@ -74,6 +85,7 @@ distance-to-coast and an iron ceiling as static fields.
 | nitrate | [World Ocean Atlas 2023](https://www.ncei.noaa.gov/access/world-ocean-atlas-2023/), seasonal, all years | public domain |
 | distance to coast | computed from `coast.bin` | — |
 | iron | three hand-drawn HNLC boxes | — |
+| dissolved oxygen | [World Ocean Atlas 2023](https://www.ncei.noaa.gov/access/world-ocean-atlas-2023/), annual, all years | public domain |
 
-Rebuild it by downloading those three into a scratch directory and running
+Rebuild it by downloading those four into a scratch directory and running
 `python3 tools/make_ocean.py <dir> data/ocean.bin`.

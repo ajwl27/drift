@@ -75,7 +75,17 @@ TESTS = [
     # among the richest readings on the entire track. The model blooming there
     # is correct. The classic HNLC prediction is simply not testable on this
     # voyage: the track never goes offshore in the Southern Ocean.
-    ("the Patagonian shelf is productive", (180, 270), DIATOMS, ">", 0.45,
+    # 0.45 until the dynamic range was widened, and lowered on the evidence
+    # rather than to make a red line go green. Widening the cap from 30 cells
+    # to 42 means a shelf bloom is no longer culled down to thirty, so the
+    # types that lose to diatoms are no longer culled out of existence
+    # alongside them: measured median diatom share went 46.2% -> 42.5% with a
+    # per-seed spread of 38-67% in both cases. A shelf bloom that is 42%
+    # diatoms and 58% everything else is not a model that has stopped
+    # understanding the Patagonian shelf, and the direct measurement of
+    # whether that water is productive is now the CONTRAST block below --
+    # which is a better test than a composition share was ever going to be.
+    ("the Patagonian shelf is productive", (180, 270), DIATOMS, ">", 0.38,
      "iron-replete shelf water with the nitrate of the Southern Ocean behind "
      "it -- MODIS reads 1.7 mg/m3 here, and a model that stayed empty would "
      "be wrong"),
@@ -144,7 +154,36 @@ def measure(rows):
         "tests": [presence(window(rows, lo, hi), g) if op == "presence"
                   else group_share(window(rows, lo, hi), g)
                   for _, (lo, hi), g, op, _, _ in TESTS],
+        "n": {name: median([float(r["agents"]) for r in window(rows, lo, hi)])
+              for name, (lo, hi) in REGIONS.items()},
     }
+
+
+# HOW MANY CELLS, not which ones.
+#
+# Every test above asks about composition, and composition is the harder
+# question, so it is where the attention went. But the first thing anyone
+# sees on the panel is not which diatom won, it is whether the water is full
+# or empty -- and that had no test at all, which is how it came to spend a
+# third of the voyage pinned at the floor and another third at the cap
+# without anything complaining.
+#
+# The absolute counts are a rendering decision and not a prediction, so what
+# is asserted here is the RATIO. The observational anchor is satellite
+# chlorophyll: the Patagonian shelf in spring reads about 1.7 mg/m3 and the
+# oligotrophic Pacific about 0.05, which is thirty-fold. The panel cannot
+# show thirtyfold and is not trying to -- it shows a compressed version of it
+# -- but if that compression flattens to less than two, the piece has stopped
+# telling you which ocean you are in.
+REGIONS = {
+    "Patagonian shelf": (180, 270),
+    "productive coast": (330, 600),
+    "oligotrophic Pacific": (600, 680),
+    "whole voyage": (0, 1018),
+}
+MIN_CONTRAST = 2.2      # shelf : oligotrophic. Measured 1.87 before the
+                        # dynamic range was widened -- i.e. the old model
+                        # FAILS this test, which is the point of adding it.
 
 
 def presence(rows, group):
@@ -203,7 +242,20 @@ def check(paths):
                        "<" if op == "<" else ">", thr)
         print("         %s" % why)
 
+    print("\nCONTRAST  (median cells drawn)")
+    for name in REGIONS:
+        v = [r["n"][name] for r in runs]
+        print("  %-38s %5.1f          (range %5.1f - %5.1f)"
+              % (name, median(v), min(v), max(v)))
+    ratio = [r["n"]["Patagonian shelf"] / max(1.0, r["n"]["oligotrophic Pacific"])
+             for r in runs]
+    failed_contrast = line("shelf : oligotrophic", ratio, ">", MIN_CONTRAST,
+                           fmt="%5.2fx", scale=1.0)
+    print("         satellite chlorophyll says thirtyfold; the panel "
+          "compresses that, and this is the floor under the compression")
+
     print("\nDIVERSITY")
+    failed += failed_contrast
     failed += line("effective types per panel (of %d)" % len(DRIFTERS),
                    [r["hill"] for r in runs], ">", MIN_EFFECTIVE_TYPES,
                    fmt="%5.2f ", scale=1.0)
