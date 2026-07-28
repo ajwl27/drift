@@ -54,6 +54,7 @@ Headless (writes stills, no pygame needed):
 import math
 import random
 import sys
+import time
 
 # --------------------------------------------------------------------------
 # 1. CONFIG
@@ -830,6 +831,30 @@ def solar_elevation(day_of_year, hour_utc, lat=LAT, lon=LON):
     return math.asin(max(-1.0, min(1.0, sin_elev)))
 
 
+# WHOSE CLOCK THE SUN KEEPS
+#
+# The panel's diel cycle used to run on the SHIP's local time, which is
+# geographically honest and wrong for the object. Drake's track crosses every
+# longitude, so over the voyage the ship's midnight drifts through all
+# twenty-four hours of the owner's day -- and for months at a stretch the
+# bioluminescence would happen at three in the afternoon while nobody was in
+# the room, and the panel would sit in full daylight all evening.
+#
+# So the hour is the room's and everything else is the ship's. Solar noon
+# lands at your noon; day LENGTH, solar declination and the whole seasonal
+# signal still come from the ship's latitude and the voyage's date. A
+# midsummer night in the Drake Passage is still four hours long. The only lie
+# is one of longitude, and it is the lie that turns a simulation into a thing
+# that shares a room with you.
+#
+# It is phrased as an OFFSET rather than a call to the clock so that it
+# survives the speed control: at one second per second the offset is constant
+# and the panel is exactly in step with the wall, and at a day a second the
+# same arithmetic spins the sun so the cycle can be watched. On the hardware
+# the RTC supplies local wall-clock time and this is where it arrives.
+SUN_CLOCK_ROOM = True
+
+
 class Environment:
     """Everything the ecosystem knows about the physical world.
 
@@ -846,6 +871,25 @@ class Environment:
         self.temp_anomaly = 0.0
         self._light_day = -1
         self._light_mean = 0.0
+        self.sun_offset = 0.0       # days, added to t before taking the hour
+
+    def sync_sun_to_room(self, t_days, hour=None):
+        """Phase the sun so that solar noon is the room's noon.
+
+        `hour` is local wall-clock hours past midnight -- from the RTC on the
+        panel, from time.localtime() here. Called once at construction; call
+        it again to re-sync, though at one second per second there is nothing
+        to re-sync to, the offset being constant by construction."""
+        if hour is None:
+            lt = time.localtime()
+            hour = lt.tm_hour + lt.tm_min / 60.0 + lt.tm_sec / 3600.0
+        self.sun_offset = (hour / 24.0) - (t_days % 1.0)
+
+    def sun_hour(self, t_days):
+        """The hour the sun is told about, 0..24."""
+        if SUN_CLOCK_ROOM:
+            return ((t_days + self.sun_offset) % 1.0) * 24.0
+        return (t_days % 1.0) * 24.0
 
     def where(self, t_days):
         if self.track is None:
@@ -952,10 +996,18 @@ class Environment:
         Not flipped by hemisphere -- the real solar geometry already handles
         that, because it takes the actual latitude. This is the one seasonal
         term in the model that was correct all along and just needed telling
-        where it was."""
+        where it was.
+
+        The latitude and the date are the ship's; the hour is the room's.
+        See the note above Environment for why -- and note that passing
+        longitude zero alongside a local hour is exactly what makes solar
+        noon land at hour twelve, so the hybrid costs one substitution and
+        no special case."""
         doy = (t_days % 365.25) + 1
-        hour = (t_days % 1.0) * 24.0
         lat, lon = self.where(t_days)
+        if SUN_CLOCK_ROOM:
+            lon = 0.0
+        hour = self.sun_hour(t_days)
         elev = solar_elevation(doy, hour, lat, lon)
         if elev <= 0:
             return 0.0
@@ -1233,6 +1285,86 @@ TURN_SCALE = 1.0
 # Per-grazer housekeeping. Which of them migrate vertically, how efficiently
 # each converts what it eats, and how many of each the panel will carry.
 MIGRATORS = (COPEPOD, KRILL)
+
+# --- diel vertical migration ----------------------------------------------
+#
+# The largest coordinated movement of animals on Earth, and until now it was
+# invisible on this panel. Measured before touching anything: the TARGET
+# depths were already nearly the whole column -- 14 m at night, 48 m by day,
+# a 34 m swing over 55 m of water -- and the realised swing was 11 m.
+#
+# The rate was why. The old approach rate of 2.2/day is a time constant of
+# 10.9 hours against a forcing with a 12-hour half-period, and a first-order
+# lag driven near its own corner frequency keeps 33% of the amplitude and
+# arrives 4.7 hours late. Worse, the between-individual spread was 14 m --
+# so the scatter across the population was LARGER than the migration itself,
+# which is precisely the recipe for something reading as noise.
+#
+# A real Calanus ascends at one to three centimetres a second and crosses
+# fifty metres in half an hour to an hour and a half, so the honest time
+# constant is about an hour and the old number was an order of magnitude too
+# slow. Fixing it is not an exaggeration of the effect, it is the removal of
+# an accidental low-pass filter: at 15/day the panel keeps 91% of the
+# amplitude and lags by 1.5 hours.
+#
+# The spread comes down to 6 m because a real migrating population forms a
+# LAYER -- that is why it shows up on an echosounder as one -- and the
+# scatter it does have is mostly in timing rather than in destination.
+DVM_NIGHT_M = 6.0          # where the layer sits after dark
+DVM_DAY_M = 44.0           # and in daylight
+DVM_SPREAD_M = 6.0         # between-individual variation in destination
+#
+# PURSUIT AT A FIXED SPEED, not exponential relaxation -- and this is the
+# difference between a migration and a smudge.
+#
+# An exponential approach is what you write when you want something to settle
+# somewhere, and it is the wrong model for an animal going somewhere. It
+# spends most of its travel decelerating, so against a 24-hour forcing
+# anything with a time constant over about four hours loses most of its
+# amplitude no matter how far it was trying to go. That is survivable for a
+# copepod at 40 m/h and fatal for a dinoflagellate at 1.5, which is why the
+# protists' migration was 4.7 m of a 30 m target.
+#
+# A migrating animal does not decelerate. It swims at its speed until it
+# arrives and then holds. So: move toward the target at a fixed rate, capped
+# by the distance remaining. The copepod crosses the column in an hour and a
+# half and the dinoflagellate completes its eighteen metres over the twelve
+# hours it has -- both of them arriving, which the lag model never did.
+DVM_SPEED_MH = 40.0        # m/h for the copepods and krill. Measured
+                           # ascent rates are 1-3 cm/s, i.e. 36-108 m/h.
+SLOW_SPEED_MH = 1.5        # m/h for the swimming protists. Ceratium and the
+                           # other large dinoflagellates manage 1-2.
+DVM_I_HALF = 0.022         # the irradiance the ascent is half-finished at.
+                           # DVM is cued by low light near twilight, not by
+                           # noon, so this is a small number on purpose: it
+                           # puts the whole movement inside the twilight hour
+                           # instead of smearing it across the morning.
+MIXO_TOP_M = 6.0           # a swimming protist's daytime depth, for light...
+MIXO_DEEP_M = 24.0         # ...and its night one, down where the nitrogen is.
+                           # An 18 m excursion, which is what 1.5 m/h can
+                           # actually finish in the twelve hours it has. The
+                           # old target was 30 m and it never once arrived.
+
+# HOW MUCH OF SWIMMING GOES INTO THE VERTICAL, and this was the actual reason
+# the migration could not be seen.
+#
+# Swimming is modelled as a correlated random walk, so over long enough it is
+# diffusion with D = v^2 * tau. For a copepod that is about 375 px^2/s
+# horizontally. The old code damped the vertical component by multiplying the
+# DISPLACEMENT by 0.25, which is a factor of sixteen off the diffusivity --
+# leaving 0.5 m^2/s, or a standard deviation of SIXTY METRES an hour in a
+# column fifty-five metres deep. The population was therefore smeared over
+# the whole panel at all times, and the 34-metre migration underneath it was
+# never going to be visible through that.
+#
+# The physical statement that fixes it: an animal holding station is not
+# random-walking in the vertical. It swims in the horizontal plane and
+# actively keeps its depth, which is what `ztarget` already models. So
+# anything with a target gets the hard damping and everything else -- a
+# flagellate with no preferred depth at all -- keeps the free value.
+Z_SWIM_HOLD = 0.020        # for depth-keepers: gives a layer a few m thick
+Z_SWIM_FREE = 0.25         # for everything with nowhere in particular to be
+
 HET_ASSIM = {COPEPOD: 1.4, TINTINNID: 1.1, KRILL: 1.3, SALP: 1.6}
 # Per class, and they must sum to no more than MAX_ZOO or the total cap is a
 # fiction that only the seeding path respects.
@@ -2279,7 +2411,8 @@ def _wrap_pi(d):
 
 class Agent:
     __slots__ = ("g", "x", "z", "ang", "body", "phase", "vel", "mass", "age",
-                 "vigour", "gravid", "flash", "vis", "doomed", "mode", "head")
+                 "vigour", "gravid", "flash", "vis", "doomed", "mode", "head",
+                 "ztarget")
 
     def __init__(self, g, x, z, mass, rng, vis=0.02):
         self.g = g
@@ -2295,6 +2428,8 @@ class Agent:
         self.vigour = 1.0
         self.gravid = False
         self.flash = -1e9         # real_t of the last flash; never, so far
+        self.ztarget = None       # the depth it is trying to be at, or None
+                                  # for the ones that only sink
         self.vis = vis            # 0..1 visual presence. This is what stops
         self.doomed = False       # cells popping in and out of existence.
         self.mode = TROPHY[g.kind]
@@ -2340,6 +2475,7 @@ class Ecosystem:
     def __init__(self, seed=None, start_day=0.0, track=None, ocean=None):
         self.rng = random.Random(seed)
         self.env = Environment(self.rng, track, ocean)
+        self.env.sync_sun_to_room(start_day)
         self.track = track
         self.t = start_day
         r = self.rng
@@ -2600,10 +2736,30 @@ class Ecosystem:
                 return k
         return HET_KINDS[0]
 
+    def _z_target(self, a):
+        """The depth this animal is trying to be at, right now.
+
+        Shared by the hourly ecology and the spawn path. Without the second
+        caller a copepod that arrived at ten past midnight would hold
+        whatever depth it was seeded at until the hour turned, which at one
+        second per second is an hour of a new arrival ignoring the migration
+        every other cell in the panel is doing."""
+        k = a.g.kind
+        floor = self._o2_floor.get(k, Z_MAX)
+        if k in MIGRATORS:
+            return min(DVM_NIGHT_M + DVM_SPREAD_M * a.g.curl
+                       + (DVM_DAY_M - DVM_NIGHT_M) * self._dvm, floor)
+        return min(9.0 + 24.0 * (0.5 + 0.5 * a.g.curl), floor)
+
     def _spawn_het(self, kind):
         r = self.rng
         a = Agent(Genome(kind, r), r.uniform(0, W), r.uniform(5, Z_MAX * 0.8),
                   r.uniform(0.8, 1.4), r, 0.02)
+        a.ztarget = self._z_target(a)
+        # and it arrives near where its kind is, not at a random depth: a
+        # copepod materialising at fifty metres in the middle of the night
+        # and then swimming up is a thing nobody has ever seen happen
+        a.z = max(1.0, min(Z_MAX - 1.0, a.ztarget + r.gauss(0.0, 4.0)))
         self.agents.append(a)
         return a
 
@@ -2640,6 +2796,9 @@ class Ecosystem:
     _o2_a, _o2_b = 250.0, 0.0        # umol/kg at the surface, and per metre
     _o2_floor = {}                   # kind -> deepest habitable metre
     _o2_rule = None                  # depth of the drawn rule, or None
+    _night = 0.0                     # circadian gate, 0 by day
+    _dvm = 1.0                       # migration cue, 1 = fully descended
+    _mixing = 0.5
     time_compression = 1.0     # simulated seconds per real second; the
                                # preview sets it from the speed control
 
@@ -2752,8 +2911,21 @@ class Ecosystem:
         slow = max(1e-3, self.swim_scale)     # the slow-motion factor
         body_k = 1.0 - math.exp(-dt_s / BODY_TAU)
         floors = self._o2_floor
+        # How far anything travelling to its preferred depth gets this frame,
+        # in SIMULATED days -- not in dt_s, which is the viewer's seconds. A
+        # copepod's ascent takes an hour and a half of ocean, and at a day a
+        # second that hour and a half has to go past in a couple of frames or
+        # the migration stops happening the moment you wind the speed up to
+        # look for it.
+        dz_fast = DVM_SPEED_MH * 24.0 * dt
+        dz_slow = SLOW_SPEED_MH * 24.0 * dt
         for a in self.agents:
             k = a.g.kind
+            zt = a.ztarget
+            if zt is not None:
+                lim = dz_fast if k in MIGRATORS else dz_slow
+                d = zt - a.z
+                a.z += lim if d > lim else (-lim if d < -lim else d)
             bl = SWIM_BL.get(k)
             if bl is None:
                 # not a swimmer: tumbling in shear, and nothing else. Not
@@ -2763,6 +2935,7 @@ class Ecosystem:
                     min(dt_s, 4.0 * TUMBLE_S)) * (2.0 * math.pi / TUMBLE_S) * 0.35
                 continue
             v0 = bl * 2.0 * visual_radius(a) * slow       # px per second
+            zsw = Z_SWIM_FREE if zt is None else Z_SWIM_HOLD
             tau = TURN_TAU.get(k, 10.0) / slow * self.turn_scale
             if dt_s >= tau:
                 # Far past the decorrelation time: one step is a whole random
@@ -2779,7 +2952,7 @@ class Ecosystem:
                 a.body = a.head
                 a.ang = a.head + math.pi
                 a.x += rng.gauss(0.0, step) * 0.7071
-                a.z += rng.gauss(0.0, step) * 0.7071 * 0.25 / zpx
+                a.z += rng.gauss(0.0, step) * 0.7071 * zsw / zpx
                 a.x %= W
                 a.z = max(0.4, min(floors.get(k, Z_MAX) - 0.4, a.z))
                 continue
@@ -2826,7 +2999,7 @@ class Ecosystem:
             # vertical swimming is damped: the diel migration and the sinking
             # terms own the depth axis, and a copepod that could cross fifty
             # metres in a minute would make nonsense of both
-            a.z += v * dt_s * math.sin(a.body) * 0.25 / zpx
+            a.z += v * dt_s * math.sin(a.body) * zsw / zpx
             a.ang = a.body + math.pi          # the drawings face -u
             # WRAP AND CLAMP HERE, every frame.
             #
@@ -3083,6 +3256,14 @@ class Ecosystem:
         # 0.4 * NIGHT_I so that dusk is a transition and not a switch, and
         # firmly shut at noon in any latitude the ship can reach.
         self._night = min(1.0, max(0.0, (NIGHT_I - surface) / (0.6 * NIGHT_I)))
+        # The migration cue, which is NOT `daylight`. Zooplankton descend on
+        # a low light threshold near twilight rather than in proportion to
+        # how bright noon is, so this saturates early: a Hill function of the
+        # surface irradiance with its half point down in the twilight. The
+        # effect is that the whole ascent happens inside an hour or two
+        # around sunset instead of being smeared across the afternoon.
+        s2 = surface * surface
+        self._dvm = s2 / (s2 + DVM_I_HALF * DVM_I_HALF)
 
         self._mix_nitrogen(dt, mld, mixing)
         self._step_pico(dt, surface, chl, t)
@@ -3198,8 +3379,8 @@ class Ecosystem:
             if a.mode == MIXO:
                 # motile: swims up for light by day, down for nutrients at
                 # night. The opposite phase to the copepods.
-                target = 5.0 + 30.0 * (1.0 - daylight)
-                a.z += (target - a.z) * min(1.0, 1.2 * dt)
+                a.ztarget = MIXO_TOP_M + (MIXO_DEEP_M - MIXO_TOP_M) * (
+                    1.0 - daylight)
             else:
                 # Sinking is allometric and buoyancy is per-type. A starving
                 # cell sinks faster, which is real -- nutrient-stressed diatoms
@@ -3222,21 +3403,17 @@ class Ecosystem:
         # ---- heterotrophs -------------------------------------------------
         for a in hets:
             k = a.g.kind
-            floor = self._o2_floor.get(k, Z_MAX)
-            if k in MIGRATORS:
-                # diel vertical migration, with individual variation so they
-                # do not sweep up and down as one rigid block. Copepods and
-                # krill both do it; ciliates and salps do not.
-                #
-                # The daytime descent is the half of it that oxygen can take
-                # away. Off Peru this line is the difference between a
-                # copepod spending the daylight hours at fifty metres and
-                # spending them at thirty-eight, in full view.
-                target = min(7.0 + 14.0 * a.g.curl + 34.0 * daylight, floor)
-                a.z += (target - a.z) * min(1.0, 2.2 * dt)
-            else:
-                target = min(9.0 + 24.0 * (0.5 + 0.5 * a.g.curl), floor)
-                a.z += (target - a.z) * min(1.0, 0.5 * dt)
+            # Diel vertical migration, for the two that do it. Only the
+            # DESTINATION is decided here; the swimming to it happens on the
+            # frame path, in _swim, because at one second per second an
+            # hourly correction of eight metres is a teleport and the whole
+            # point of this is that you can watch them go.
+            #
+            # The daytime descent is the half of it that oxygen can take
+            # away. Off Peru that is the difference between a copepod
+            # spending the daylight hours at fifty metres and spending them
+            # at thirty-eight, in full view.
+            a.ztarget = self._z_target(a)
             # Grazers get the thermal niche the drifters have always had.
             # Without it a krill with a 4 C optimum fed happily in 28 C water
             # and the tropical gyres filled with Euphausia, which is a

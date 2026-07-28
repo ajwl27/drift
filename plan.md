@@ -1029,6 +1029,156 @@ Ranked by probability × damage.
 
 ---
 
+## 10r. Whose clock the sun keeps, and why the largest migration on Earth was invisible
+
+### The sun now keeps the room's hour
+
+The panel's diel cycle ran on the SHIP's local time, which is geographically
+honest and wrong for the object. Drake's track crosses every longitude, so
+over the voyage the ship's midnight drifts through all twenty-four hours of
+the owner's day — and for months at a stretch the bioluminescence would
+happen at three in the afternoon while nobody was in the room, and the panel
+would sit in full daylight all evening.
+
+**So the hour is the room's and everything else is the ship's.** Solar noon
+lands at your noon; day length, solar declination and the whole seasonal
+signal still come from the ship's latitude and the voyage's date. A midsummer
+night in the Drake Passage is still four hours long. The only lie is one of
+longitude, and it is the lie that turns a simulation into a thing that shares
+a room with you.
+
+It costs one substitution. `solar_elevation` already takes a longitude;
+passing zero alongside a local hour is exactly what puts solar noon at hour
+twelve, so there is no special case anywhere.
+
+It is phrased as an **offset** rather than a call to the clock, which matters
+for two reasons. At one second per second the offset is constant and the
+panel is exactly in step with the wall. At a day a second the same arithmetic
+spins the sun, so the cycle can still be watched in the console — a design
+that read the wall clock directly would sit in perpetual mid-afternoon the
+moment you wound the speed up to look at the thing you were tuning. On the
+hardware the RTC supplies local wall-clock time and `sync_sun_to_room()` is
+where it arrives.
+
+`SUN_CLOCK_ROOM = False` restores the ship's own time.
+
+### DVM: the target was right, everything else was wrong
+
+Measured before touching anything, at the Patagonian shelf:
+
+| | |
+|---|---|
+| target depths | 14 m at night, 48 m by day — a 34 m swing in 55 m of water |
+| **realised swing** | **11 m** |
+| between-individual scatter | **±20 m** |
+
+The scatter across the population was **larger than the migration itself**,
+which is precisely the recipe for something reading as noise. Three separate
+faults, and the third was the real one.
+
+**1. The approach rate.** 2.2/day is a time constant of 10.9 hours against a
+forcing with a 12-hour half-period. A first-order lag driven near its own
+corner frequency keeps 33% of the amplitude and arrives 4.7 hours late. A
+real *Calanus* ascends at 1–3 cm/s and crosses fifty metres in half an hour
+to an hour and a half. The model was an order of magnitude too slow.
+
+**2. It ran on the ecology's clock.** Hourly. At one second per second an
+hourly correction of eight metres is a teleport. Only the destination is
+decided in `step()` now; the swimming to it happens in `_swim`, on the frame
+path, in simulated days so that it survives the speed control.
+
+**3. Swimming leaked sixty metres an hour into the vertical.** This was the
+one that made the other two unfixable.
+
+Swimming is a correlated random walk, so over long enough it is diffusion
+with D = v²τ — about 375 px²/s horizontally for a copepod. The vertical was
+damped by multiplying the **displacement** by 0.25, which is a factor of
+sixteen off the **diffusivity**, leaving 0.5 m²/s. That is a standard
+deviation of sixty metres an hour in a column fifty-five metres deep. The
+population was therefore smeared over the whole panel at all times and no
+amplitude of migration underneath it was ever going to be visible.
+
+The physical statement that fixes it: **an animal holding station is not
+random-walking in the vertical.** It swims in the horizontal plane and
+actively keeps its depth, which is what the depth target already models. So
+anything with a target gets `Z_SWIM_HOLD = 0.020` and everything else — a
+flagellate with nowhere in particular to be — keeps the free 0.25.
+
+### Pursuit, not relaxation
+
+Then the protists forced a better model of the movement itself.
+
+An exponential approach is what you write when you want something to *settle*
+somewhere, and it is the wrong model for an animal *going* somewhere: it
+spends most of its travel decelerating. Against a 24-hour forcing, anything
+with a time constant over about four hours loses most of its amplitude no
+matter how far it was trying to go. Survivable for a copepod at 40 m/h;
+fatal for a dinoflagellate at 1.5, which is why the swimming protists were
+managing 4.7 m of a 30 m target — they had never once arrived.
+
+A migrating animal does not decelerate. It swims at its speed until it
+arrives and then holds. So the depth term is now **rate-limited pursuit**:
+move toward the target at a fixed speed, capped by the distance remaining.
+
+| | speed | source |
+|---|---|---|
+| copepods, krill | 40 m/h | measured ascent rates are 1–3 cm/s, i.e. 36–108 m/h |
+| swimming protists | 1.5 m/h | *Ceratium* and the other large dinoflagellates do 1–2 |
+
+The protists' target came down to a 18 m excursion at the same time, because
+that is what 1.5 m/h can actually finish in the twelve hours it has. A target
+you cannot reach is not a target.
+
+### What it looks like now
+
+Patagonian shelf, one simulated day, mean depth by hour:
+
+| local hour | migrators | swimming protists | diatoms |
+|---|---|---|---|
+| 00:00 | 13.2 m | 23.5 | 23.6 |
+| 04:00 | **6.1** | 24.6 | 24.1 |
+| 10:00 | 46.9 | 20.2 | 24.7 |
+| 14:00 | **43.9** | **16.7** | 24.8 |
+| 18:00 | 7.2 | 19.6 | 27.1 |
+| 22:00 | 5.4 | 23.1 | 23.7 |
+
+**42 metres of swing, 280 px of a 368 px column**, completed and held rather
+than crept toward. And the two migrations run in **opposite phase** — the
+animals down by day, the protists up by day for the light — which is correct,
+is not something anyone designed, and is the sort of thing that makes a panel
+worth looking at twice.
+
+The diatoms do not move, because diatoms do not move. Half of what makes the
+other two read is that something in the frame is holding still.
+
+The transition takes about two hours around sunrise and sunset rather than
+being smeared across the morning, because the cue is a Hill function of
+surface irradiance with its half point down in the twilight
+(`DVM_I_HALF = 0.022`) — zooplankton descend on a low light threshold, not in
+proportion to how bright noon is.
+
+### Console
+
+Six new sliders under DVM: night depth, day depth, the two swimming speeds,
+the vertical hold, and the between-individual spread. Per the brief, the
+drama is now dialable rather than decided.
+
+And two fixes to the abundance group, which was quietly lying:
+
+- **`CAP_SCALE` is now re-solved live** from the floor and the exponent.
+  It was fixed at 9.3, so dragging `cells: cap` to 60 moved a ceiling the
+  curve never reached — an inert slider is worse than a missing one.
+- The readout under the panel now says what the three of them **actually
+  deliver**: `cells: gyre 4  median 13  bloom 40`, against the measured
+  percentiles of capacity over the voyage. Nobody can hold
+  `scale * capacity ** exp` clipped at both ends in their head.
+
+The layout also needed fixing: the key legend hung off the taller of the two
+columns, so adding five sliders to one side pushed the legend into the
+buttons on the other. Each block now measures against its own column.
+
+---
+
 ## 10q. Night, the oxygen minimum zone, the range the panel was throwing away — and half the frame cost
 
 Four things in this pass. Three are yours; the fourth is that the whole thing

@@ -89,7 +89,7 @@ PAD = 10
 # would throw it away to save forty pixels.
 COL = 800                    # both control columns plus the gap between
 SUBCOL = 390                 # one of them
-GROUP_COL = {"MOTION": 0, "GAIT": 0, "WATER": 0, "OCEAN": 0,
+GROUP_COL = {"MOTION": 0, "GAIT": 0, "WATER": 0, "OCEAN": 0, "DVM": 0,
              "PANEL": 1, "SCENE": 1, "DISPLAY": 1,
              "TIMING": 1, "KEY PLATE": 1}
 RULER_MM = 100               # the calibration bar's true length. Fixed.
@@ -225,6 +225,27 @@ PARAMS = [
     # which is as close to off as this needs to get.
     Param("lum", "flash rate", 0.1, 40.0, 1.0, log=True, fmt="%.2f",
           unit="x", group="OCEAN"),
+    # Where the migrating layer sits at each end of the day, and how fast it
+    # gets between them. The rate is the one that was wrong: 2.2/day is a
+    # time constant of eleven hours against a twelve-hour forcing, which is a
+    # low-pass filter sitting on top of the largest animal migration on
+    # Earth. 15/day is a real Calanus at one to three centimetres a second.
+    Param("dvmn", "DVM: night", 1.0, 30.0, drift.DVM_NIGHT_M, fmt="%.0f",
+          unit=" m", group="DVM"),
+    Param("dvmd", "DVM: day", 10.0, 54.0, drift.DVM_DAY_M, fmt="%.0f",
+          unit=" m", group="DVM"),
+    Param("dvmr", "DVM: speed", 2.0, 200.0, drift.DVM_SPEED_MH, log=True,
+          fmt="%.0f", unit=" m/h", group="DVM"),
+    Param("mixov", "protist: speed", 0.2, 20.0, drift.SLOW_SPEED_MH, log=True,
+          fmt="%.1f", unit=" m/h", group="DVM"),
+    # How tightly the population holds the layer. This is the sleeper: at the
+    # old value of 0.25 a copepod's horizontal wandering leaked sixty metres
+    # an hour into the vertical, so the whole panel was one smear and the
+    # migration underneath it could not be seen at any amplitude.
+    Param("dvmhold", "DVM: hold", 0.002, 0.30, drift.Z_SWIM_HOLD, log=True,
+          fmt="%.3f", group="DVM"),
+    Param("dvmspread", "DVM: spread", 0.0, 24.0, drift.DVM_SPREAD_M,
+          fmt="%.0f", unit=" m", group="DVM"),
     Param("fps", "frame rate", 0.25, 51.0, float(drift.TARGET_FPS), log=True,
           fmt="%.2f", unit=" fps", group="PANEL"),
     # 1.0 is the piece's real setting: one second per second, the whole
@@ -296,6 +317,22 @@ for _name, _val in vars(drift).items():
         KIND_ID[_val] = _name
 
 
+# Percentiles of Ecosystem._capacity() over the whole of Drake's track,
+# measured once (tools/check_biogeography.py's sweep, four seeds, daily
+# samples). These are what turn the three abundance sliders from three
+# numbers into a claim about what a gyre and a bloom will look like.
+CAP_P5, CAP_P50, CAP_P95 = 0.217, 1.763, 14.253
+
+
+def implied_n(st, capacity):
+    """How many large cells the current slider set would draw in water of
+    this capacity. The same expression drift._advect uses, so this cannot
+    drift out of agreement with the model."""
+    scale = st["nfloor"] / (CAP_P5 ** st["capexp"])
+    return int(round(max(st["nfloor"],
+                         min(st["nmax"], scale * capacity ** st["capexp"]))))
+
+
 def ruler_px(ppi):
     return int(round(ppi / 25.4 * RULER_MM))
 
@@ -334,6 +371,19 @@ def apply_state(st, eco):
     drift.MAX_PHYTO = int(round(st["nmax"]))
     drift.MAX_AGENTS = drift.MAX_PHYTO + drift.MAX_ZOO
     drift.CAP_EXP = st["capexp"]
+    # CAP_SCALE is SOLVED from the other three, not dialled, and doing it
+    # here rather than leaving it at its shipped value is what stops the cap
+    # slider being inert: with the scale fixed at 9.3, dragging the cap to 60
+    # moved a ceiling the curve never reached. The fit is the same two-point
+    # one the shipped numbers came from -- floor at the 5th percentile of
+    # capacity over the voyage, cap at the 95th, both measured.
+    drift.CAP_SCALE = drift.N_FLOOR / (CAP_P5 ** drift.CAP_EXP)
+    drift.DVM_NIGHT_M = st["dvmn"]
+    drift.DVM_DAY_M = st["dvmd"]
+    drift.DVM_SPEED_MH = st["dvmr"]
+    drift.SLOW_SPEED_MH = st["mixov"]
+    drift.DVM_SPREAD_M = st["dvmspread"]
+    drift.Z_SWIM_HOLD = st["dvmhold"]
     for k, v in BASE_O2.items():
         drift.O2_CRIT[k] = v * st["o2"]
     drift.O2_CRIT_SHOWN = 145.0 * st["o2"]
@@ -623,6 +673,22 @@ def run(seed=5, day=420.0):
                % (side.eco.now, abs(lat), "NS"[lat < 0], abs(lon),
                   "EW"[lon < 0], track.status(side.eco.now)))
         screen.blit(small.render(sub, True, DIM), (x, y + 36))
+        # THE MEASURED CONSEQUENCE OF THE THREE ABUNDANCE SLIDERS.
+        #
+        # They interact, and nobody can hold `scale * capacity ** exp`
+        # clipped at both ends in their head. So the console says what the
+        # curve actually delivers at the gyre, the median and the bloom,
+        # against the measured percentiles of capacity over the voyage --
+        # and how far into the night the sun currently is, since that is the
+        # other thing on this panel you cannot see by looking for one
+        # second.
+        e = side.eco
+        n5, n50, n95 = (implied_n(side.st, c) for c in (CAP_P5, CAP_P50, CAP_P95))
+        screen.blit(small.render(
+            "cells: gyre %d   median %d   bloom %d   |   sun %04.1fh  "
+            "night %.2f  dvm %.2f"
+            % (n5, n50, n95, e.env.sun_hour(e.now), e._night, e._dvm),
+            True, DIM), (x, y + 52 if not true_size else y + 68))
         if true_size:
             mm = 25.4 / max(live.st["ppi"], 1.0)
             screen.blit(small.render("%.0f x %.0f mm" % (pw * mm, ph * mm),
@@ -682,7 +748,20 @@ def run(seed=5, day=420.0):
                   "TURB_FLASH_HZ = %.3f   # x%.2f"
                   % (BASE_LUM[0] * live.st["lum"], live.st["lum"]),
                   "KRILL_FLASH_HZ = %.3f" % (BASE_LUM[1] * live.st["lum"]),
-                  "FLASH_NEAR_HZ = %.3f" % (BASE_LUM[2] * live.st["lum"])]
+                  "FLASH_NEAR_HZ = %.3f" % (BASE_LUM[2] * live.st["lum"]),
+                  "CAP_SCALE = %.2f   # solved from the floor"
+                  % (live.st["nfloor"] / (CAP_P5 ** live.st["capexp"])),
+                  "# implied cells: gyre %d, median %d, bloom %d"
+                  % tuple(implied_n(live.st, c)
+                          for c in (CAP_P5, CAP_P50, CAP_P95)),
+                  "",
+                  "# the diel migration:",
+                  "DVM_NIGHT_M = %.1f" % live.st["dvmn"],
+                  "DVM_DAY_M = %.1f" % live.st["dvmd"],
+                  "DVM_SPEED_MH = %.1f" % live.st["dvmr"],
+                  "SLOW_SPEED_MH = %.2f" % live.st["mixov"],
+                  "DVM_SPREAD_M = %.1f" % live.st["dvmspread"],
+                  "Z_SWIM_HOLD = %.4f" % live.st["dvmhold"]]
         txt = "\n".join(lines)
         os.makedirs("docs", exist_ok=True)
         with open("docs/tuned_values.txt", "w") as fh:
@@ -917,7 +996,13 @@ def run(seed=5, day=420.0):
                                (kx, y + 22), 5 if on else 4)
             idx += 1
 
-        ly = max(r[2] for r in rows()) + 46
+        # The ruler goes under the LEFT column and the key legend under the
+        # RIGHT one, each measured against its own column rather than against
+        # the taller of the two. The columns are not the same length -- they
+        # are split by group, and groups do not come in equal sizes -- so
+        # hanging both blocks off the tallest meant that adding five sliders
+        # to one side pushed the legend into the buttons on the other.
+        ly = max(r[2] for r in rows() if r[1] == 0) + 46
         if true_size:
             # CALIBRATE BY MEASURING, NOT BY ARITHMETIC. The ppi computed
             # from a monitor's advertised size and resolution is right only
@@ -950,6 +1035,7 @@ def run(seed=5, day=420.0):
 
         # the keys, in the space the sliders do not use. A development build
         # that needs its own README has failed at the first hurdle.
+        ry = max(r[2] for r in rows() if r[1] == 1) + 46
         for line in ("up/down  select        left/right  adjust",
                      "shift    fine          ctrl        coarse",
                      "backspace  reset this one",
@@ -959,8 +1045,8 @@ def run(seed=5, day=420.0):
                      "tab      A/B split against a saved copy",
                      "e        export to docs/tuned_values.txt",
                      "shift+R  reset every parameter"):
-            screen.blit(small.render(line, True, DIM), (x0, ly))
-            ly += 15
+            screen.blit(small.render(line, True, DIM), (row_x(1), ry))
+            ry += 15
 
         yb = win_h() - PAD - 48
         screen.blit(small.render(status, True, DIM), (x0, yb))

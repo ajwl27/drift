@@ -34,18 +34,26 @@ from ocean import Ocean                   # noqa: E402
 # broken when it was the captions that were wrong.
 MOMENTS = (
     (185, 12, "PATAGONIAN SHELF  NOON"),
+    (185, 0, "PATAGONIAN SHELF  MIDNIGHT"),
     (432, 12, "PERU / OMZ  NOON"),
     (432, 0, "PERU / OMZ  MIDNIGHT"),
     (620, 12, "N PACIFIC GYRE  NOON"),
     (620, 0, "N PACIFIC GYRE  MIDNIGHT"),
-    (760, 12, "MOLUCCAS  NOON"),
 )
 
 
-def utc_day(track, day, local_hour):
-    """The model's clock is UTC; the sun is not."""
-    _, lon = track.position(float(day))
-    return day + ((local_hour - lon / 15.0) % 24.0) / 24.0
+def at_local_hour(day, local_hour):
+    """The panel's sun keeps the ROOM's hour (see SUN_CLOCK_ROOM in
+    drift.py), and this tool pins the phase so that day fraction zero is
+    local midnight. So a local hour is just a day fraction, with no
+    longitude in it at all.
+
+    It was not always so simple. The first version of this file wrote
+    `day + 0.5` for noon, which under the old ship's-time clock is five in
+    the morning off Peru: every night panel came out in daylight and the
+    bioluminescence looked broken when it was the captions that were
+    wrong."""
+    return day + (local_hour % 24.0) / 24.0
 
 
 def frames(moments, seed=7, voyage="drake", real_s=6.0, fps=20):
@@ -62,8 +70,11 @@ def frames(moments, seed=7, voyage="drake", real_s=6.0, fps=20):
     except (IOError, OSError):
         ocean = None
     eco = drift.Ecosystem(seed=seed, track=track, ocean=ocean)
+    # Pin the sun instead of taking it from the wall clock, or this tool
+    # renders a different set of panels depending on what time you run it.
+    eco.env.sync_sun_to_room(0.0, hour=0.0)
     out = []
-    stops = sorted((utc_day(track, d, h), cap) for d, h, cap in moments)
+    stops = sorted((at_local_hour(d, h), cap) for d, h, cap in moments)
     for day, caption in stops:
         while eco.t < day - 1e-9:
             eco.step(min(1.0 / 24.0, day - eco.t))
@@ -74,12 +85,15 @@ def frames(moments, seed=7, voyage="drake", real_s=6.0, fps=20):
         n = sum(1 for a in eco.agents if a.vis > 0.03)
         lit = sum(1 for a in eco.agents
                   if 0 <= eco.real_t - a.flash < drift.FLASH_S)
-        out.append((c, "%s   n=%d  o2floor=%s  lit=%d"
-                    % (caption, n,
+        mig = [a.z for a in eco.agents if a.g.kind in drift.MIGRATORS]
+        zm = sum(mig) / len(mig) if mig else float("nan")
+        out.append((c, "%s   n=%d  grazers at %.0fm  o2floor=%s  lit=%d"
+                    % (caption, n, zm,
                        "-" if eco._o2_rule is None else "%.0fm" % eco._o2_rule,
                        lit)))
-        print("  %-34s n=%2d  night=%.2f  o2=%s  lit=%d"
-              % (caption, n, eco._night,
+        print("  %-30s n=%2d  night=%.2f dvm=%.2f  grazers %4.1f m  o2=%s "
+              " lit=%d"
+              % (caption, n, eco._night, eco._dvm, zm,
                  "-" if eco._o2_rule is None else "%.0fm" % eco._o2_rule, lit))
     return out
 
