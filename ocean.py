@@ -31,8 +31,9 @@ SST_LO, SST_HI = -2.0, 34.0
 MLD_LO, MLD_HI = 5.0, 600.0
 NO3_LO, NO3_HI = 0.0, 40.0
 SHELF_MAX = 2000.0
+BOT_LO, BOT_HI = 1.0, 11000.0        # log-quantised; see tools/make_bathy.py
 
-SST, MLD, NO3, SHELF, IRON = range(5)
+SST, MLD, NO3, SHELF, IRON, BOTTOM = range(6)
 
 
 class Ocean:
@@ -45,14 +46,20 @@ class Ocean:
             raise ValueError("not an ocean file: %r" % self.b[:4])
         ver, self.nlon, self.nlat, self.nmon, self.nsea = struct.unpack_from(
             "<BBBBB", self.b, 4)
-        if ver != 1:
-            raise ValueError("ocean.bin version %d, expected 1" % ver)
+        if ver not in (1, 2):
+            raise ValueError("ocean.bin version %d, expected 1 or 2" % ver)
         self.n = self.nlon * self.nlat
         o = 9
-        # byte offset of step 0 of each field
+        # byte offset of step 0 of each field. Version 2 appends bottom depth
+        # after the v1 fields, so every v1 offset is unchanged and a v2 reader
+        # can still open a v1 file -- it simply has no bathymetry, which
+        # bottom_m() reports honestly rather than guessing at.
+        fields = [(SST, self.nmon), (MLD, self.nmon), (NO3, self.nsea),
+                  (SHELF, 1), (IRON, 1)]
+        if ver >= 2:
+            fields.append((BOTTOM, 1))
         self.base = {}
-        for field, steps in ((SST, self.nmon), (MLD, self.nmon),
-                             (NO3, self.nsea), (SHELF, 1), (IRON, 1)):
+        for field, steps in fields:
             self.base[field] = o
             o += steps * self.n
         if o != len(self.b):
@@ -165,6 +172,25 @@ class Ocean:
     def shelf_km(self, lat, lon):
         v = self._static(SHELF, lat, lon)
         return SHELF_MAX if v is None else (v / 254.0) * SHELF_MAX
+
+    def bottom_m(self, lat, lon):
+        """Depth of the seabed, metres. None if this file has no bathymetry.
+
+        INTERPOLATED IN LOG SPACE, which is not fussiness, and which comes
+        free: the field is log-quantised, so blending the stored BYTES and
+        dequantising afterwards is a geometric mean rather than an arithmetic
+        one. MLD already works this way for the same reason.
+
+        It matters at every continental margin, and the track is mostly
+        continental margin. The arithmetic mean of a 90 m shelf cell and a
+        4,000 m abyssal one is 2,045 m -- a depth that exists nowhere on a
+        real margin, and one that would put a shelf species in open ocean for
+        a full cell either side of the shelf break. The geometric mean is
+        600 m, which is the upper slope, which is what is actually there."""
+        if BOTTOM not in self.base:
+            return None
+        v = self._static(BOTTOM, lat, lon)
+        return None if v is None else BOT_LO * (BOT_HI / BOT_LO) ** (v / 254.0)
 
     def iron(self, lat, lon):
         """0..1 ceiling, applied by Liebig's law of the minimum against the

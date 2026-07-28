@@ -2,6 +2,96 @@
 
 *Plan for adding Drake's circumnavigation to the plankton column.*
 
+> **The panel now shows fish.** Everything below this box is the plankton
+> column's design history and is kept because most of it is still load-bearing
+> — the voyage, the chart, the cadence, the ocean in flash, the canvas, the
+> type, and every argument about what a panel like this is for. Section 12
+> records what changed and why. Where the two disagree, section 12 wins.
+
+---
+
+## 12. The fish — **built**
+
+The full design is in `docs/superpowers/specs/2026-07-27-fish-design.md`. What
+follows is the part worth having here: the things that were got wrong, because
+those are what the next person needs.
+
+**The thesis survived the change, in a sharper form.** The plankton column's
+claim was "traits in, biogeography out — no rule mentions a place". The fish
+version keeps it and had to split it in two. An environmental envelope decides
+what water suits a species; a separate range table decides what has actually
+got there. Run on the envelope alone the model put Atlantic cod in the
+Benguela at high suitability — and it was not wrong about the water. An
+eastern boundary upwelling at 15 °C over a 150 m shelf *is* the North Sea in
+most months. Cod are absent because the tropical Atlantic is a barrier they
+have never crossed, and that is a fact about history rather than about the
+sea. Folding it into the envelope would have been a lie about what an envelope
+means.
+
+**Five failures, each total rather than marginal, and each invisible until
+something specific was looked at.**
+
+1. *The panel was empty at Plymouth on day zero.* Productivity was tested
+   against today's light; Drake sailed on 13 December; a North Sea midwinter
+   failed every species at once. Whether water is productive is a property of
+   the water and decides who lives there. How hard it is working this week is
+   the season and decides how many. A cod does not leave the North Sea in
+   December.
+
+2. *Every mesopelagic species vanished from the tropics.* The thermal envelope
+   was tested against sea surface temperature. A lanternfish at 600 m is in
+   5 °C water whether the surface above it is the Denmark Strait or the Coral
+   Sea. It is now evaluated at the depth the animal occupies — and, going the
+   other way, an *epipelagic* species' quoted range came from occurrence
+   records matched against satellite SST, so for those the surface is right
+   and the midpoint of the depth range is wrong. Chub mackerel, explicitly
+   anti-tropical, was appearing on the equator on 22 °C thermocline water.
+
+3. *The thermocline decayed linearly over forty metres.* Correct for a 55 m
+   column, and it says the tropical Pacific is 12 °C at 125 m. It is 23.
+
+4. *Fish were drawn through rock.* A cod's 0–600 m is the range of the
+   species, not a promise that there are 600 m underneath it.
+
+5. *The whole mesopelagic was drawn behind the footer.* The depth axis ran to
+   28 px of the bottom edge while the caption occupied the last 70, so
+   everything below 600 m — the half of the panel the log axis exists to show
+   — was invisible whenever the plate was up, which is 98% of the time.
+
+**The count of fish comes from the ecology, between two measured anchors.**
+This replaced four invented constants (`CAP_SCALE`, `CAP_EXP`, `ABUND_EXP`,
+`MESO_N`) and a two-band slot allocation. Run the whole voyage, find the
+scarcest a species gets while still present and the richest it ever gets, map
+those to one fish and to fifty, interpolate linearly. Three things had to be
+right: the interpolation is linear and not logarithmic, because the
+distribution is strongly right-skewed and a log map made every water on the
+track equally full; the bottom anchor is a percentile and not the single
+scarcest sample, which was one marginal bluefin three decades below the
+median; and the count is driven by biomass *per unit drawn area*, because a
+count is a number of animals where biomass is not — straight biomass put
+eighteen whale sharks in the Humboldt.
+
+**One body wave, and where it starts is the swimming mode.** Thirty-five
+species drawn by one function, differing in a profile, a tail, a fin set and
+one number. That is Breder's 1926 classification, not a convenient
+abstraction, and it is why a tuna and a viperfish are unmistakable at fifteen
+pixels.
+
+**What the 2° grid cannot do.** Bathymetry was added for fish and then turned
+out not to be able to carry the shelf signal on an eastern boundary: the Peru
+shelf is 5 to 50 km wide with a trench outboard of it, so a 2° cell averages
+the two and reports 500 to 4,300 m along the most important water on the whole
+track. The anchoveta — the largest fishery on Earth — never appeared at all.
+Distance-to-coast, computed from `coast.bin` at 0.1°, carries it instead, and
+bottom depth is demoted to excluding true abyss. That is a statement about the
+grid rather than about fish, so it is written down once.
+
+**What the checker is for.** Every one of the corrections above except the
+last two was found by looking at a picture. The abundance metric being
+dominated by tiny mesopelagic species *everywhere* — the plate reporting that
+the Humboldt, the Moluccas and the North Sea were each sixty per cent
+hatchetfish — was invisible in every panel and obvious in one table.
+
 ---
 
 ## The thing we are building

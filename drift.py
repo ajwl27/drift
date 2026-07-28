@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """
-DRIFT  -  a generative plankton column for a 1-bit reflective panel.
+DRIFT  -  the fish of a voyage, on a 1-bit reflective panel.
 
-Stage 0: runs on a laptop, renders at the EXACT resolution and bit depth of the
-target hardware, then upscales nearest-neighbour so what you see is what the
-panel will show. No anti-aliasing, no greyscale, no cheating.
+A depth section of the water the ship is sailing through, from the surface to
+a thousand metres, with the fish that live in it. Renders at the EXACT
+resolution and bit depth of the target hardware, then upscales
+nearest-neighbour so what you see is what the panel will show. No
+anti-aliasing, no greyscale, no cheating.
 
-Architecture is deliberately split so the port to RP2350 is mechanical:
+Architecture is deliberately split so the port to the ESP32-S3 is mechanical:
 
     Canvas       ~200 lines of integer raster primitives.  Reimplement these
                  six functions in C and everything above them ports unchanged.
     Environment  pure float maths, no state.  Ports as-is.
-    Ecosystem    NPZ model + individual agents.  Ports as-is.
-    Renderer     calls Canvas only.  Ports as-is.
+    fish.py      the roster and the envelope.  Pure data and four
+                 comparisons.  Ports as-is.
+    draw.py      procedural morphology.  Canvas only.  Ports as-is.
+    Ecosystem    who is in this water, and how they swim.  Ports as-is.
     preview()    pygame.  Thrown away on the port.
 
 Run:
-    pip install pygame numpy
+    pip install pygame numpy pillow
     python3 drift.py
+    python3 drift.py beagle     # or any key in voyage.VOYAGES
 
 Keys:
     space       pause
@@ -25,21 +30,13 @@ Keys:
     1 2 3 4 5   speed presets: real time / 1 min / 1 hr / 6 hr / 1 day per sec
     m           next screen now, and switch to the EXHIBIT cadence
     v           next voyage
-    c           CLEAN MODE -- organisms and snow only, all chrome hidden
+    c           CLEAN MODE -- fish and water only, all chrome hidden
     h           toggle HUD
     p           toggle the footer / map and key plate chrome
-    n           toggle the chemoautotroph stipple
+    n           toggle the seabed and the depth scale
     s           save a PNG
     r           reseed the world
     esc         quit
-
-The voyage runs on the same clock as the ecosystem -- there is no separate
-voyage rate. At the default 1 MIN/SEC a simulated day takes 24 real minutes
-and the whole circumnavigation takes 17 real days: slow enough to be a thing
-that sits there, fast enough that it has moved between one look and the
-next.
-
-    python3 drift.py beagle     # or any key in voyage.VOYAGES
 
 Headless (writes stills, no pygame needed):
     python3 drift.py --stills out/
@@ -49,16 +46,16 @@ import math
 import random
 import sys
 
+import draw
+import fish as F
+
 # --------------------------------------------------------------------------
 # 1. CONFIG
 # --------------------------------------------------------------------------
 
 W, H = 300, 400            # panel resolution, portrait. The 4.2in RLCD on
                            # the ESP32-S3-RLCD-4.2, which is the panel this
-                           # is now built for. It was 240 x 400 (a 2.7in
-                           # Sharp) and the change is worth the note: the
-                           # globe limb radius sqrt(150^2+200^2) is now
-                           # exactly 250, where 240 x 400 gave 233.238.
+                           # is built for.
 PANEL_DIAG_IN = 4.2        # the physical panel, for true-size preview only
 SCALE = 0.9138             # preview upscale, and this value is TRUE PHYSICAL
                            # SIZE on a 27in 1440p monitor (108.79 ppi) for a
@@ -67,141 +64,232 @@ SCALE = 0.9138             # preview upscale, and this value is TRUE PHYSICAL
                            # see the note in preview(). tools/console.py has a
                            # ruler that computes this for any monitor; set it
                            # to 2 for a big blocky view instead.
-TARGET_FPS = 20            # preview frame rate. Both this and SWIM_SCALE are
-                           # judgements about how a moving thing looks, so
-                           # they are set with tools/tune.py rather than by
-                           # reasoning, and pasted back here.
+TARGET_FPS = 20            # preview frame rate.
 
-LAT = 52.0800              # Melbourn
+LAT = 52.0800              # Melbourn, when there is no track
 LON = 0.0200
 
-Z_MAX = 55.0              # metres of water column mapped to the panel height
-MAX_PHYTO = 30             # separate caps, or phytoplankton crowd out the
-MAX_ZOO = 7                # grazers entirely during a bloom
-# HOW FAST THE WATER GOES PAST, and the honest version of this is worth
-# writing down because the obvious answer is unusable.
+# --------------------------------------------------------------------------
+# THE DEPTH AXIS, AND WHY IT IS LOGARITHMIC
+# --------------------------------------------------------------------------
 #
-# The tidal drift as modelled averages 37 px/day, which at one second per
-# second is 0.0004 px/s: the water crosses the panel in **195 hours**. That
-# is, in practice, still.
+# The plankton column was 55 m, linear, magnified about two hundred times.
+# This is a thousand metres, reduced about two and a half thousand times, and
+# the axis has to change shape as well as scale.
 #
-# The tempting fix is to advect at the ship's actual speed. Drake makes about
-# 84 km/day, which is 0.97 m/s, and the panel at the magnification the
-# copepod is drawn at is about 50 mm of water. So literal advection is
-# **5,845 px/s -- 292 pixels per frame at 20 fps**, which is not fast water,
-# it is a grey field. The panel is not a window on the water beside the hull;
-# it is a SAMPLE of it, magnified two hundred times, and a sample does not
-# inherit the velocity of the thing it was taken from.
+# Fish depth distributions span three orders of magnitude. On a linear
+# thousand-metre axis the entire sunlit ocean -- every sardine, tuna, flying
+# fish and shark on the roster -- is squeezed into the top fifth of the panel
+# and the remaining four fifths hold a scattering of mesopelagics. That is a
+# true picture of the volume and a useless picture of the life.
 #
-# So DRIFT_SCALE spans the usable ground between those two, and the top of
-# its range is set by what can be watched rather than by what is true.
+# On a log axis the top 200 m gets half the panel and the mesopelagic gets the
+# other half. Z0 is chosen to make that exactly true:
 #
-# It multiplies the steady RESIDUAL and not the tide, because the residual is
-# the ship's passage through the water and the tide is the water's own
-# business. Scaling both made a control whose effect depended on when you
-# dragged it -- the M2 tide passes through zero twice a day, and twenty
-# thousand times nothing is nothing.
+#     log1p(200/Z0) / log1p(1000/Z0) = 1/2   ->   Z0 = 200/3
 #
-# Tunable in tools/console.py, and it is a judgement about looking, like
-# SWIM_SCALE and TARGET_FPS.
-DRIFT_SCALE = 1.0
+# which is worth writing as an identity rather than a tuned constant, because
+# "the sunlit zone gets half the panel" is the decision and 66.7 is only its
+# consequence.
+Z_MAX = 1000.0             # metres of water column mapped to the panel height
+Z0 = 200.0 / 3.0           # the log axis knee -- see above
+Z_SUN = 200.0              # the epipelagic boundary, drawn as a hairline
 
-IMMIGRATION = 0.35         # background arrivals per day even at anchor: the
-                           # "everything is everywhere" term, now subordinate
-                           # to advection.
+MAX_AGENTS = 56            # render cost lives here, and it is now the only
+                           # thing standing between the panel and a Humboldt
+                           # anchovy shoal. Raised from 34 because the count
+                           # comes from the ecology rather than from a budget:
+                           # at AB_N_MAX = 50 the richest water asks for more
+                           # than the panel can hold, and what happens then is
+                           # a proportional scale-down rather than a
+                           # truncation -- see _shares().
+N_FLOOR = 6                # THE PANEL IS NEVER BARE, and in a gyre this is
+                           # not a fallback: the mesopelagic is never empty,
+                           # lanternfish are the most abundant vertebrates on
+                           # Earth, and six fish in barren water is what that
+                           # water actually holds.
 
-# --- advection -----------------------------------------------------------
-# The community was grown in place, which is the right model for a moored
-# instrument and the wrong one for a ship. Drake makes 80 to 180 km on a good
-# day; the panel is showing NEW WATER every day or two, so the community is
-# overwhelmingly carried in from ahead rather than descended from what was
-# there yesterday.
+# --- how many, and of what ------------------------------------------------
 #
-# This is not a refinement. The satellite check said the drivers correlate
-# with real chlorophyll at rho +0.68 and the population's response at +0.03,
-# and that smoothing recovered nothing -- a population carrying a memory of
-# weeks was being towed through water that changes in days, so its biomass
-# reflected where it was in its own internal cycle rather than the water it
-# was in. No parameter fixes a timescale mismatch.
-FLUSH_PER_100KM = 0.55     # fraction of the field replaced per day at 100
-                           # km/day. Residence half-life about 1.3 days under
-                           # way, which is fast enough to track the water and
-                           # slow enough to watch a cell drift and divide.
-CAP_EXP = 0.45             # n_visible goes as capacity^0.45 -- this is the
-                           # compression from the plan's section 1, which
-                           # until now was never actually implemented: the
-                           # agent count was capped and culled instead, which
-                           # is a different thing and a worse one.
-CAP_SCALE = 13.0
-N_FLOOR = 9                # the panel is never bare
-MAX_AGENTS = MAX_PHYTO + MAX_ZOO   # render cost lives here
-SNOW_COUNT = 80            # fine unresolved detritus, decorative
-MAX_DETRITUS = 46          # resolved particles, from actual deaths
-
-NBINS = 22                 # depth bins for the biogeochemistry
-BIN_M = Z_MAX / NBINS
-
-EMERGE_D = 0.55            # days for a new cell to fade in
-DIE_D = 0.40               # days for a dying cell to fade out
-
-# --- physics of the moving water -----------------------------------------
-T_M2 = 0.517500            # principal lunar semidiurnal tide, days (12h25m)
-U_TIDE = 150.0             # tidal excursion amplitude, px/day
-U_RESID = 38.0             # residual drift, px/day
-SHEAR_Z = 22.0             # e-folding depth of the current profile, m
-
-# --- nitrogen ------------------------------------------------------------
-PSI = 1.4                  # ammonium inhibition of nitrate uptake
-V_NIT = 2.2                # max nitrification rate
-K_NIT = 0.55
-Y_NIT = 0.150              # chemoautotroph yield per unit N oxidised
-LOSS_NIT = 0.085
-I_NIT_INHIB = 0.004        # nitrification is photoinhibited -> it lives deep
-REMIN = 0.115              # detritus remineralisation rate, /day
-W_DET = 9.0                # detritus sinking, m/day
-
-# biology
-MU_MAX = 1.45              # max phyto division rate, /day
-I_K = 0.095                # light half-saturation (normalised irradiance)
-K_S = 1.20                 # nutrient half-saturation. Was 0.45, which is
-                           # under half the published value for a large
-                           # diatom (1.25 mmol/m3, Litchman 2006) and, more
-                           # to the point, low enough that a subtropical gyre
-                           # saturated it and bloomed.
-K_WATER = 0.035            # background light attenuation, /m
-K_CHL = 0.055               # extra attenuation per unit biomass (self-shading)
-N_DEEP = 13.0              # deep nutrient reservoir
-GRAZE_RADIUS = 26.0        # metres... artistic licence, see note below
-RESPIRATION = 0.06         # per day, at the reference size. Scaled
-                           # allometrically per type -- see RESP_EXP.
-K_PREY = 10.0              # prey half-saturation, in agents. See _graze_f.
-
-# --- picoplankton --------------------------------------------------------
-# Not agents. A 0.7 um Prochlorococcus is a thousandth of a pixel, and there
-# are a hundred thousand of them per millilitre -- they are the single largest
-# pool of living carbon on the track and they cannot be drawn as individuals.
-# So they are a scalar per depth bin, rendered as the stipple.
+# Suitability says who CAN live here. It does not say how many, and two real
+# facts set that:
 #
-# Carrying them is not decoration. They are what a subtropical gyre is
-# actually made of, they are the prey the microzooplankton had none of, and
-# they are what a mixotroph eats when there is nothing else. Without them the
-# gyres had no small-cell class at all, and the smallest thing that WAS
-# resolved -- a 30 um pennate diatom -- inherited the ecological role of a
-# picoplankton without paying any of its costs.
-MU_PICO = 1.70             # /day. Small, fast, shade-adapted.
-K_PICO = 0.10              # the lowest half-saturation in the model, which is
-                           # the whole reason they own the oligotrophic ocean
-I_K_PICO = 0.045           # shade-adapted relative to the larger cells
-LOSS_PICO = 0.16
-T_OPT_PICO, T_W_PICO = 24.0, 13.0     # warm-restricted (Flombaum et al. 2013)
-PICO_MAX = 4.0
-PICO_GRAZE = 0.55          # how fast a microzooplankton clears its bin
+#   1. Trophic transfer is about ten per cent per level, so each step up the
+#      food chain is an order of magnitude less biomass. This is the whole of
+#      the trophic coupling: a marlin is rare in barren water because there is
+#      nothing beneath it, without any rule mentioning marlin or barren water.
+#   2. For a given biomass, larger animals are fewer -- numbers go as 1/mass,
+#      and mass as length cubed.
+#
+# Together those give numbers proportional to 10^-(T-2.5) / L^3, and applied
+# literally that is a ratio of about 5,800 anchoveta to one skipjack. Which is
+# true, and unwatchable: the skipjack would appear about twice a voyage.
+#
+# So the ratio is COMPRESSED, by a power, exactly as the plankton model
+# compressed its capacity term and for the same reason. At ABUND_EXP = 0.22
+# the same pair comes out near seven to one -- the ordering is preserved,
+# every fish is rarer than everything it eats, and a skipjack turns up often
+# enough to be seen. It is a deliberate lie about magnitude and an honest one
+# about direction, and the key plate's abundance bar is where the magnitude
+# gets told properly.
+# THE TWO ANCHORS, MEASURED OVER THE WHOLE VOYAGE.
+#
+# tools/check_biogeography.py calibrate runs all 1018 days and reports the
+# scarcest a species ever gets while still being present, and the richest any
+# species ever gets. Those two are mapped to one fish and to AB_N_MAX fish,
+# and everything between is log-interpolated.
+#
+# Measured, not chosen, which is the whole argument for doing it this way: the
+# scheme this replaced normalised suitability into a share of a panel budget
+# that was itself a compressed function of capacity, so the number of fish on
+# the panel was three judgements deep and none of them could be checked
+# against anything.
+#
+#   AB_LO   0.494   a lone bluefin off Cape Virgenes, day 254
+#   AB_HI   2345    Argentine anchovy on the Patagonian shelf, day 164
+#
+# LINEAR BETWEEN THEM, and the first attempt at this was logarithmic and
+# wrong. The abundance distribution is strongly right-skewed -- the median
+# species scores 92 against a maximum of 2345 -- so a log map lifts the whole
+# middle of the distribution toward the top of the count range. Every water on
+# the track then asked for more fish than the panel could hold, everything got
+# scaled back to the cap, and the gyre and the Humboldt came out identically
+# full: the one comparison the piece exists to make, erased by an interpolation
+# curve.
+#
+# Linear keeps the skew. A mid-abundance species draws three or four fish and
+# fifty is reserved for something that genuinely swarms, which is what a shoal
+# of anchovy on the Patagonian shelf actually is.
+AB_LO = 1.5
+AB_HI = 4082.0
+AB_N_MAX = 32              # fish drawn for the richest a species ever gets.
+                           # MEASURED AGAINST THE WHOLE TRACK rather than
+                           # picked. Fifty was the first guess and it pinned
+                           # the panel to MAX_AGENTS for 62% of the voyage --
+                           # with a dozen species present, even a few fish
+                           # each overruns the budget, the proportional
+                           # scale-down engages, and the interpolation stops
+                           # meaning anything because every water is equally
+                           # full. Swept over 255 samples:
+                           #
+                           #     AB_N_MAX   median   at cap
+                           #        50        56      62%
+                           #        40        49      25%
+                           #        32        41       6%
+                           #        26        35       1%
+                           #
+                           # 32 keeps the interpolation honest almost
+                           # everywhere and is still unmistakably a shoal.
 
-# NOTE ON SCALE. The depth axis is real: it drives light, nutrients and diel
-# migration. Organism size is NOT to scale -- a 60 um diatom would be a
-# fraction of a pixel. Treat the panel as a plate, or an imaging cytometer
-# field, with depth mapped vertically. Scientific illustration has always
-# done this.
+TROPHIC_REF = 2.5          # the base of the pyramid, near a pure planktivore
+TURNOVER_EXP = 0.0         # SIZE DOES NOT ENTER BIOMASS, and getting here
+                           # took two wrong answers.
+                           #
+                           # The trophic term is a PRODUCTION ratio -- ten per
+                           # cent transfer is a statement about energy. What
+                           # stands in the water is production divided by
+                           # turnover, and P/B falls with size, so the obvious
+                           # correction is a positive size exponent. At 0.5 it
+                           # fixed the Argentine anchovy taking 98% of the
+                           # Patagonian shelf, and broke something worse: the
+                           # WHALE SHARK became the highest-biomass species in
+                           # the Humboldt, the Moluccas and the Benguela. A
+                           # ten-metre filter feeder eating at trophic 3.6
+                           # gets a small trophic penalty and a sevenfold size
+                           # boost, and nothing in the model knew that whale
+                           # sharks are rare.
+                           #
+                           # They are rare for a reason none of these terms
+                           # carries: population density is limited by home
+                           # range, not by energy. Rather than invent a term
+                           # for that, the size correction goes to zero, which
+                           # is also what the observation says -- the Sheldon
+                           # spectrum finds roughly EQUAL biomass in each
+                           # logarithmic size class of the sea. Production
+                           # falling with size and biomass staying flat are
+                           # the same statement, so the two cancel and the
+                           # honest exponent is nought.
+                           #
+                           # Kept as a named constant rather than deleted
+                           # because the reasoning above is worth more than
+                           # the line it removes.
+TROPHIC_DECADE = 0.8       # DECADES OF BIOMASS LOST PER TROPHIC LEVEL, and
+                           # 1.0 -- the textbook ten per cent -- is the top of
+                           # the measured range rather than the middle of it.
+                           # Pauly and Christensen 1995 put the global mean
+                           # near 10%, but with wide variation and with
+                           # productive shelf and upwelling systems markedly
+                           # higher; 0.8 decades is 16%, which is inside that
+                           # range and is where the shelf systems this track
+                           # crosses actually sit.
+                           #
+                           # At 1.0 the Argentine anchovy took 98% of the
+                           # Patagonian shelf, because it sits exactly at the
+                           # reference level and everything else on that shelf
+                           # is a decade and a half above it. A forage fish
+                           # dominating a shelf is real -- anchoita biomass
+                           # there genuinely exceeds hake by several times --
+                           # but 98% is the exponent talking, not the ocean.
+# CAP_EXP, CAP_SCALE, ABUND_EXP and MESO_N were here. All four were invented
+# constants used to turn suitability into a panel budget and then to divide
+# that budget between two depth bands. They are replaced by AB_LO/AB_HI above,
+# which are measurements, and by the band term inside abundance(), which is a
+# mechanism. Four fewer numbers, and the two that remain can be re-derived by
+# anyone who runs the calibration.
+
+# --- how fast the community changes ---------------------------------------
+#
+# The ship makes 80 to 180 km on a good day and the assemblage is recomputed
+# from the water continuously, so composition tracks position for free. What
+# does not come for free is the RATE: snapping the population to a new target
+# the instant the envelope changes would make fish blink in and out as the
+# ship crosses a front.
+#
+# TURNOVER_D is the e-folding time of that relaxation. At 1.6 days the
+# community has substantially changed after a good day's sail and still holds
+# together while you watch it, which is the same trade the plankton model's
+# FLUSH_PER_100KM was making.
+TURNOVER_D = 1.6
+ECO_DT = 1.0 / 24.0         # the ecology's own clock: one simulated hour
+EMERGE_D = 0.5             # days for a new arrival to fade in
+DIE_D = 0.4                # days for a departure to fade out
+
+# --- productivity ---------------------------------------------------------
+#
+# With the NPZ model gone, productivity is an ENVIRONMENTAL FIELD rather than
+# a simulated population: nitrate from flash, times light, times the iron
+# ceiling. One Monod, one product, no state -- and it does the job the whole
+# plankton model was doing for the purposes that remain, which is the reason
+# deleting that model simplified things rather than complicating them.
+N_FALLBACK = 13.0          # the nitrate reservoir with no ocean file
+K_PROD = 8.0               # Monod half-saturation on the nitrate reservoir
+L_SAT = 0.30               # daily mean irradiance at which light stops
+                           # limiting. Above this, productivity is nutrients.
+
+# --- motion ---------------------------------------------------------------
+#
+# Swimming runs at REAL time, not simulated time -- the same decision, for the
+# same reason, as the plankton column. The speed control spans six orders of
+# magnitude and swimming does not: scaled with the calendar, a skipjack moves
+# the width of the panel between frames at 1 DAY/SEC and stops being an animal.
+#
+# The ecology is unaffected, because with presence decided by an envelope
+# there is no equation that reads a fish's x coordinate.
+SWIM_SCALE = 0.22          # fraction of true speed shown. Higher than the
+                           # plankton's 0.09: a tuna at 2 BL/s and 45 px long
+                           # crosses the panel in three seconds at full speed,
+                           # which is a glimpse rather than a fish.
+TURN_SCALE = 1.0           # multiplier on every TURN_TAU
+BODY_TAU = 0.45            # seconds for the body to swing to a new heading
+SHOAL_TAU = 30.0           # seconds before a shoal's collective heading
+                           # decorrelates. Long: a shoal commits.
+VERT_MAX = 8.0             # metres a fish may swim vertically in one step,
+                           # whatever the speed control is doing
+VERT_DAMP = 0.18           # how much of a fish's swimming goes into depth.
+                           # Low on purpose -- the depth axis belongs to the
+                           # diel migration and the species' own band, and a
+                           # tuna that could cross the thermocline in a second
+                           # would make nonsense of both.
 
 
 # --------------------------------------------------------------------------
@@ -716,11 +804,11 @@ class Environment:
         two orders below that. Dropping the floor to 0.3 is what finally
         makes an oligotrophic gyre behave like one."""
         if self.ocean is None:
-            return N_DEEP
+            return N_FALLBACK
         la, lo = self.where(t_days)
         n = self.ocean.nitrate(la, lo, t_days)
         if n is None:
-            return N_DEEP
+            return N_FALLBACK
         return max(0.3, min(30.0, 0.3 + 2.6 * n))
 
     def iron(self, t_days):
@@ -831,28 +919,95 @@ class Environment:
         mld = self.mixed_layer_depth(t_days)
         return min(1.0, 0.28 + 0.55 * (mld / Z_MAX) + 0.6 * self.storm)
 
-    def current(self, t_days, z):
-        """Horizontal velocity, px/day.  A semidiurnal M2 tide under a
-        spring-neap envelope, plus a steady residual, both sheared with
-        depth.  Everything advects together, which is what makes the
-        assemblage read as one body of water rather than independent
-        particles doing random walks.
+    # THE TIDE IS GONE, and it is worth saying why rather than leaving a
+    # hole. The plankton column advected its cells with an M2 tide and a
+    # residual, scaled by DRIFT_SCALE, because at that magnification the
+    # water's own motion was the only motion there was -- a copepod swims a
+    # body length a second and the panel was fifty millimetres wide.
+    #
+    # Here the panel is several hundred metres wide and a skipjack crosses it
+    # under its own power in a few seconds. A tidal excursion of 150 px/day
+    # against a fish doing 45 px/second is four decimal places of nothing, and
+    # a control for it would have been a control that does nothing. What
+    # replaced it is not a smaller tide: it is TURNOVER_D, which advects the
+    # COMMUNITY rather than the individuals, and which is the term that
+    # actually matters when the ship is making 100 km a day.
 
-        Multiplied by DRIFT_SCALE, which is where the argument is."""
-        spring_neap = 0.62 + 0.38 * math.cos(2 * math.pi * (t_days - 2.0) / 14.765)
-        tide = U_TIDE * spring_neap * math.sin(2 * math.pi * t_days / T_M2)
-        shear = 0.30 + 0.70 * math.exp(-z / SHEAR_Z)
-        # DRIFT_SCALE multiplies the RESIDUAL only, not the tide.
-        #
-        # Scaling the whole thing was the first attempt and it made a slider
-        # whose effect depended on when you happened to drag it: the M2 tide
-        # swings +/-150 px/day through zero twice a day, so at the wrong
-        # moment 20,000x of nothing is still nothing. The residual is the
-        # steady term -- it is the ship's passage through the water, which is
-        # what this control is actually about -- and multiplying that gives a
-        # flow that is there whenever you look, with the tide still riding on
-        # top of it at its own amplitude.
-        return (tide + U_RESID * DRIFT_SCALE) * shear * (1.0 + 0.5 * self.storm)
+    def productivity(self, t_days):
+        """0..1, how productive this water is. The base of the food chain.
+
+        With the NPZ model deleted this is an environmental field rather than
+        a simulated population: a Monod saturation on the nitrate reservoir,
+        times light, times the iron ceiling. No state, one sample from flash,
+        and it feeds the trophic term exactly as a modelled phytoplankton
+        standing stock would have.
+
+        LIGHT IS DELIBERATELY NOT IN HERE, and leaving it in was a total
+        failure rather than a marginal one: the panel was EMPTY at Plymouth
+        on day zero. Drake sailed on 13 December, a North Sea midwinter has
+        almost no light, so the productivity index came out at 0.09 and every
+        species in northern Europe failed its productivity axis at once.
+
+        The error was conflating two different things. Whether a water mass
+        is productive is a property of the water -- its nutrient supply, and
+        whether there is iron to use it -- and it is what decides WHO lives
+        there. How much that water is producing this week is a property of
+        the season, and it decides HOW MANY. A cod does not leave the North
+        Sea in December.
+
+        So light moved to season() below, and what is left is the part that
+        is genuinely about the water: a Monod saturation on the nitrate
+        reservoir under an iron ceiling. Iron cannot be dropped -- without it
+        the Southern Ocean reads as the richest water on the planet, which is
+        the region most famous for having every nutrient it needs and nothing
+        to use them with, and the track crosses two such regions."""
+        n = self.deep_nitrate(t_days)
+        return (n / (n + K_PROD)) * min(1.0, self.iron(t_days))
+
+    def season(self, t_days):
+        """0..1. How hard this water is working right now, as opposed to what
+        it is capable of. Scales the number of fish, never the species list.
+
+        The floor is 0.25 rather than 0: a dark sea in February holds fewer
+        fish than the same sea in June, and it does not hold none."""
+        return 0.25 + 0.75 * min(1.0, self.daily_light(t_days) / L_SAT)
+
+    def bottom_m(self, t_days):
+        """Depth of the seabed under the ship, metres.
+
+        The fallback is deliberately deep rather than shallow. Without an
+        ocean file there is no bathymetry, and guessing shallow would put
+        shelf species everywhere on a track that is mostly open ocean;
+        guessing deep gives the mesopelagic, which is the honest answer to
+        'somewhere at sea, no further information'."""
+        if self.ocean is None:
+            return 4000.0
+        la, lo = self.where(t_days)
+        d = self.ocean.bottom_m(la, lo)
+        return 4000.0 if d is None else d
+
+    # THE THERMOCLINE, AND WHY IT HAD TO BE REWRITTEN FOR A KILOMETRE.
+    #
+    # The old profile went from the mixed layer to a deep value LINEARLY over
+    # forty metres, and clamped. That was defensible when the panel was 55 m
+    # deep -- forty metres was most of the column and nothing was ever asked
+    # about deeper water.
+    #
+    # On a thousand-metre axis it is catastrophic: every depth below about
+    # 90 m returns the deep value, so the model believed the tropical Pacific
+    # was 12 C at 125 metres. It is about 23. The visible symptom was chub
+    # mackerel -- an explicitly ANTI-tropical species -- turning up on the
+    # equator, because the water it was being offered at its own living depth
+    # was cold enough for it.
+    #
+    # The real ocean decays roughly exponentially from the mixed layer to a
+    # deep value that is nearly the same everywhere: the abyss is 2-4 C under
+    # the equator and under Iceland alike, because it is all filled from the
+    # poles. So the scale height does the work and the deep value barely
+    # varies. Checked against the tropical Pacific: 23.6 C at 125 m, 10.7 at
+    # 500, 5.6 at 1000, against observed values of roughly 22, 9 and 5.
+    THERMO_Z = 350.0           # e-folding depth of the thermocline, metres
+    T_ABYSS = 3.0              # the deep ocean, which is cold everywhere
 
     def temperature(self, t_days, z):
         if self.ocean is not None:
@@ -863,8 +1018,8 @@ class Environment:
                 mld = self.mixed_layer_depth(t_days)
                 if z <= mld:
                     return surf
-                deep = min(surf, 4.0 + 8.0 * math.cos(math.radians(la)))
-                return surf - (surf - deep) * min(1.0, (z - mld) / 40.0)
+                deep = min(surf, self.T_ABYSS + 1.5 * math.cos(math.radians(la)))
+                return deep + (surf - deep) * math.exp(-(z - mld) / self.THERMO_Z)
         doy = self.hemisphere_doy(t_days)
         lat, _ = self.where(t_days)
         # A crude latitudinal gradient standing in for real SST until Stage 3
@@ -881,2114 +1036,625 @@ class Environment:
         deep = min(surf, 4.0 + 6.0 * clat)
         return surf - (surf - deep) * min(1.0, (z - mld) / 40.0)
 
-
 # --------------------------------------------------------------------------
-# 4. ORGANISMS  -  procedural morphology
-# --------------------------------------------------------------------------
-
-(RADIOLARIAN, CENTRIC, PENNATE, CHAIN, CERATIUM, COPEPOD, TINTINNID,
- COCCO, FLAGELLATE, THALASSIO, RHIZO, CORETHRON, ACANTHARIA, FORAM,
- ORNITHO, TRICHO, SALP, KRILL) = range(18)
-
-AUTO, MIXO, HETERO = range(3)
-
-KIND_NAME = {
-    RADIOLARIAN: "radiolarian", CENTRIC: "centric", PENNATE: "pennate",
-    CHAIN: "chain", CERATIUM: "ceratium", COPEPOD: "copepod",
-    TINTINNID: "tintinnid", COCCO: "cocco", FLAGELLATE: "flagellate",
-    THALASSIO: "thalassio", RHIZO: "rhizo", CORETHRON: "corethron",
-    ACANTHARIA: "acantharia", FORAM: "foram", ORNITHO: "ornitho",
-    TRICHO: "tricho", SALP: "salp", KRILL: "krill",
-}
-
-# Who eats how.  Diatoms are strict phototrophs.  Ceratium and the
-# radiolarian are mixotrophs -- they photosynthesise AND ingest, which is why
-# they persist through the nutrient-starved summer when the diatoms cannot.
-# Copepods and tintinnids are heterotrophs.  The chemoautotrophs are not
-# agents at all; see Ecosystem.nit.
-TROPHY = {
-    CENTRIC: AUTO, PENNATE: AUTO, CHAIN: AUTO, COCCO: AUTO,
-    FLAGELLATE: AUTO, THALASSIO: AUTO, RHIZO: AUTO, CORETHRON: AUTO,
-    TRICHO: AUTO,
-    RADIOLARIAN: MIXO, CERATIUM: MIXO, ACANTHARIA: MIXO, FORAM: MIXO,
-    ORNITHO: MIXO,
-    COPEPOD: HETERO, TINTINNID: HETERO, SALP: HETERO, KRILL: HETERO,
-}
-PHOTO_KINDS = (CENTRIC, PENNATE, CHAIN, COCCO, FLAGELLATE, THALASSIO,
-               RHIZO, CORETHRON, TRICHO)
-MIXO_KINDS = (RADIOLARIAN, CERATIUM, ACANTHARIA, FORAM, ORNITHO)
-DRIFTER_KINDS = PHOTO_KINDS + MIXO_KINDS      # everything under MAX_PHYTO
-HET_KINDS = (COPEPOD, TINTINNID, SALP, KRILL)
-
-# Trichodesmium fixes its own nitrogen, so nothing else in the model applies
-# to it in the usual way: no N limitation at all, a hard temperature floor,
-# and an iron demand twenty-five times everyone else's because nitrogenase
-# carries fifteen iron atoms per subunit (Berman-Frank et al. 2001, measured
-# Fe:C of 180-214 against 1-7 for a diatom). Those three numbers are the
-# entire reason the subtropical gyres are habitable, and the reason
-# Trichodesmium is abundant in the dust-fed Atlantic and scarce in the
-# iron-poor Pacific.
-DIAZOTROPHS = (TRICHO,)
-DIAZO_T_MIN = 20.0         # Breitbarth et al. 2007: fixation stops below this
-DIAZO_FE_COST = 25.0
-
-
-# --- swimming ------------------------------------------------------------
-#
-# At one simulated second per real second the panel was completely still: the
-# tidal current is 0.0003 px/s, the turbulent jitter the same, and an organism
-# took twenty-five days to rotate once. Which is correct in metres and wrong
-# on the panel -- because the panel already magnifies SIZE by about a hundred
-# thousand and does not magnify the depth axis at all. It is inconsistent by
-# construction, and the question is only which scale the motion should follow.
-#
-# It should follow the drawing. A copepod rendered twenty pixels long that
-# moves a pixel an hour is inconsistent with its own picture, and the eye
-# reads the picture. So swimming speed is expressed in BODY LENGTHS per
-# second -- which is the one number that survives the magnification -- and
-# multiplied by the drawn size.
-#
-# Values are real. Ciliates are the fastest things in the sea relative to
-# their size; dinoflagellates are next; copepods cruise at about a body
-# length a second and dart at a hundred; diatoms and rhizarians do not swim at
-# all and only sink and tumble.
-SWIM_BL = {
-    FLAGELLATE: 14.0, TINTINNID: 8.0, KRILL: 3.0, CERATIUM: 2.0,
-    ORNITHO: 1.6, COPEPOD: 1.1, SALP: 0.6,
-}
-SWIM_SCALE = 0.09          # global damper, set by eye with tools/console.py.
-                           # It is the fraction of true speed the panel shows,
-                           # so this is eleven-fold slow motion (see 10g).
-
-# Swimming runs at REAL time, not simulated time.
-#
-# It is the same class of deliberate lie as drawing a 60 micron diatom twenty
-# pixels across, and it is forced by the same thing: the speed control spans
-# six orders of magnitude and swimming does not. Scaled with the calendar, a
-# tintinnid moves 65 px between frames at the default 1 MIN/SEC and 2,853 px
-# at 1 DAY/SEC -- it stops being an organism and becomes noise. Held at real
-# time it stays around 20 px/s at every setting, which also keeps it in a
-# sensible ratio to the tidal drift at the default speed.
-#
-# The ecology is unaffected: swimming is a rendering behaviour, and the
-# horizontal displacement it produces is not something any equation reads.
-TURN_TAU = {               # seconds before a heading decorrelates. Ciliates
-    FLAGELLATE: 3.0, TINTINNID: 4.0, CERATIUM: 12.0, ORNITHO: 14.0,
-    COPEPOD: 9.0, KRILL: 40.0, SALP: 25.0,
-}                          # spiral tightly; a salp holds a course, and krill
-                           # school, which is the straightest thing out there.
-TUMBLE_S = 150.0           # seconds for a non-swimmer to turn once in shear
-
-# SWIM_SCALE IS A SLOW-MOTION FACTOR, AND IT HAS TO APPLY TO THE CLOCK.
-#
-# This was got wrong first time and the error was visible from across the room
-# before it was visible in any number: cells jittered, changing direction far
-# more than a thing moving that slowly should. The reason is that the original
-# code slowed the translation by SWIM_SCALE and left TURN_TAU alone, so the
-# organism turned at full rate while travelling at a fifth of it. Per body
-# length swum it therefore turned 1/SWIM_SCALE times as often as the real
-# animal -- about four and a half times -- and a path that crumpled is exactly
-# what "moving more than its swim speed" looks like.
-#
-# The fix is to treat SWIM_SCALE as what it actually is. Showing something in
-# slow motion means dividing every velocity by the factor AND multiplying every
-# duration by it. Then the path through the water is the real animal's path,
-# shape for shape, merely traversed slowly -- which is the only version of this
-# that can claim the literature values still mean anything.
-#
-# The seam, stated rather than hidden: this applies to self-propelled motion
-# only. Sinking, tumbling in shear and the tidal drift are the water's doing,
-# not the organism's, and their rate is already set by the time compression.
-# So TUMBLE_S is not scaled and a diatom keeps turning at its own pace.
-
-# Gaits. Real plankton do not swim by rotational diffusion; that was a
-# convenient abstraction and it looks like one. Each group has a characteristic
-# temporal signature, all of it long-documented, and none of it is white noise:
-HELIX, HOP, CRUISE = 0, 1, 2
-GAIT = {
-    FLAGELLATE: HELIX,     # flagellar beat is asymmetric, so the cell corkscrews
-    TINTINNID: HELIX,      # ciliates likewise, and faster
-    CERATIUM: HELIX,       # dinoflagellates: slow, steady, unmistakable spiral
-    ORNITHO: HELIX,
-    COPEPOD: HOP,          # hop-and-sink: a burst of a few body lengths, then
-    SALP: HOP,             # nothing. Salps do the same by jet, more slowly.
-    KRILL: CRUISE,         # continuous pleopod beating, and they school
-}
-# Helix: cycles per second and yaw half-angle in radians, in ANIMAL time.
-HELIX_HZ = {FLAGELLATE: 1.2, TINTINNID: 0.9, CERATIUM: 0.40, ORNITHO: 0.32}
-HELIX_YAW = {FLAGELLATE: 0.40, TINTINNID: 0.34, CERATIUM: 0.24, ORNITHO: 0.20}
-# Hop: bursts per second, and the seconds a burst takes to bleed away against
-# drag. A copepod's coast is short because at its Reynolds number the water is
-# treacle; a salp is bigger, faster and glides.
-HOP_HZ = {COPEPOD: 2.0, SALP: 1.0}
-# Coasts, shortened to 0.40 of the published figures by eye. A longer coast
-# reads as gliding and a shorter one as a flick, and the flick is what a
-# copepod actually looks like at this size.
-COAST_S = {COPEPOD: 0.040, SALP: 0.200}
-# Seconds for the body axis to swing round to a new intended heading. A cell
-# steers, it does not teleport, and this is also what stops the heading noise
-# from reaching the drawing: it is a first-order low-pass, so the body follows
-# the part of the wander that is real turning and ignores the part that is the
-# model's own white noise. In PANEL time -- it is a drawing rate, not biology.
-BODY_TAU = 0.50
-# A multiplier on every TURN_TAU, and the one lever for "how much do they
-# wander". Left at 1.0 the paths are the real animals' paths; the scaling
-# above already fixed the crumpling, and this exists because how much
-# meandering looks alive on a panel is another judgement by eye, tuned with
-# tools/tune.py turn rather than argued for.
-TURN_SCALE = 1.0
-
-# Per-grazer housekeeping. Which of them migrate vertically, how efficiently
-# each converts what it eats, and how many of each the panel will carry.
-MIGRATORS = (COPEPOD, KRILL)
-HET_ASSIM = {COPEPOD: 1.4, TINTINNID: 1.1, KRILL: 1.3, SALP: 1.6}
-# Per class, and they must sum to no more than MAX_ZOO or the total cap is a
-# fiction that only the seeding path respects.
-HET_CAP = {COPEPOD: 3, TINTINNID: 2, KRILL: 2, SALP: 2}
-
-# Visual radius as a multiple of the nominal draw radius.  A Chaetoceros
-# chain throws setae out to 3.4r and spans 6r along its axis, so using the
-# bare radius for separation was why everything overlapped.
-# MEASURED, not estimated: every morphology drawn at four radii and twenty-four
-# genomes, and the furthest ink from centre recorded. The hand-guessed values
-# were wrong for half the roster and wrong by a factor of two for the chains,
-# which is exactly the sort of error that shows up as unexplained overlap.
-EXTENT = {
-    ACANTHARIA: 1.05, CENTRIC: 1.05, CERATIUM: 2.10, CHAIN: 8.40,
-    COCCO: 1.40, COPEPOD: 1.75, CORETHRON: 3.15, FLAGELLATE: 3.50,
-    FORAM: 2.80, KRILL: 2.52, ORNITHO: 1.47, PENNATE: 1.05,
-    RADIOLARIAN: 2.10, RHIZO: 4.90, SALP: 5.60, THALASSIO: 6.65,
-    TINTINNID: 1.47, TRICHO: 3.15,
-}
-
-
-# --------------------------------------------------------------------------
-# TRAITS
+# 4. THE WATER COLUMN
 # --------------------------------------------------------------------------
 #
-# The point of this table is what is NOT in it.  There is no column saying
-# where anything lives, and no rule anywhere that mentions a place.  Each
-# organism carries a size, a growth intercept and a thermal preference; the
-# ocean carries conditions; and who wins falls out.  If the panel fills with
-# diatom chains off Peru it is because the model worked out that a high
-# maximum growth rate beats a good nutrient affinity when nutrients are
-# abundant -- not because a table said PERU -> DIATOMS.
+# What is in this water, and how it swims. There is no population dynamics
+# here and there should not be: fish turn over on a scale of years and the
+# whole voyage is 1018 days, so a birth-and-death model would run for three
+# simulated years and show almost nothing. What the panel shows instead is
+# OCCUPANCY -- the ship sails into new water, and the water has different
+# fish in it, because it is different water.
 #
-# Almost everything is DERIVED from size, using published allometry rather
-# than invented numbers:
-#
-#     mu_max  proportional to  V^-0.25     Edwards et al. 2012, marine,
-#     K_N     proportional to  V^+0.30     95% CI (-0.20,-0.29) and
-#     sinking proportional to  V^+0.39     (+0.26,+0.42); Ward et al. 2012
-#
-# and since V goes as ESD cubed, those become ESD^-0.75, ESD^+0.90 and
-# ESD^+1.17.  That single trade-off -- small cells scavenge better, large
-# cells grow faster in absolute terms -- is the entire engine of size-based
-# biogeography, and it is why this is a two-hour refactor rather than a new
-# model.
-#
-# The one genuine taxonomic exception, and it is the important one: Edwards
-# et al. find that when you control for volume, between-taxon differences
-# mostly vanish EXCEPT that diatoms grow significantly faster than
-# dinoflagellates and others at the same size (p<0.001).  Ward et al. put the
-# intercept at 3.8 for diatoms against 2.1 for other eukaryotes.  So diatoms
-# get a higher INTERCEPT, not a different exponent.  That is the whole of
-# "diatoms are the weeds", and it is one number.
+# That is not a simplification of the ecology. It is the correct model for
+# what is being depicted, and it is why the whole of section 5 of the old
+# file -- NPZ, picoplankton, detritus, division, inheritance -- is gone rather
+# than adapted.
 
-ESD_REF = 50.0             # microns; the size the base rates are quoted at
-MU_EXP = -0.75             # per ESD, from Edwards' V^-0.25
-# ...but ONLY above about 20 microns. Extrapolating a monotonic power law down
-# to a 5 micron flagellate says it grows at 4.5 divisions a day, which is
-# roughly double anything ever measured -- and in the model it produced a
-# super-organism with the best growth rate AND the best nutrient affinity that
-# took 97% of the voyage.
-#
-# The real relationship is UNIMODAL. Maranon et al. 2013 showed maximum growth
-# rate peaks at intermediate cell size and falls away on both sides: below the
-# optimum a cell cannot shrink its metabolic machinery in proportion, so the
-# advantage of being small is affinity, not speed. Which is exactly the
-# trade-off the model was missing -- small cells should own the oligotrophic
-# ocean because nothing else can find the nutrients, not because they are also
-# the fastest thing in it.
-ESD_PEAK = 20.0            # microns, where mu_max tops out
-MU_EXP_SMALL = 0.45        # below the peak, growth rate RISES with size.
-                           # 0.70 was too steep -- it put a nanoflagellate at
-                           # 0.6 divisions a day, and they measure 1 to 2.
-                           # Maranon's peak is broad, not sharp.
-K_EXP = 0.90               # per ESD, from Edwards' V^+0.30
-W_EXP = 1.17               # per ESD, from Ward's V^+0.39
-RESP_EXP = -0.75           # Respiration goes as V^0.75, so MASS-SPECIFIC
-                           # respiration goes as V^-0.25 -- the same exponent
-                           # as growth, and per ESD the same -0.75. This is
-                           # the large cell's half of the bargain: it grows
-                           # slowly, and it also burns slowly, so it survives
-                           # the gaps that starve a fast small one. Leaving it
-                           # flat gave every type the same maintenance cost
-                           # and quietly deleted the entire K-strategist
-                           # advantage from the model.
-Q10_EPPLEY = 1.066         # Eppley 1972: mu_max envelope goes as 1.066^T
-T_REF = 15.0
-
-# kind: (esd_um, intercept, T_opt, T_width, buoyancy, defence)
-#   esd_um     equivalent spherical diameter. A Chaetoceros cell is ~10 um but
-#              behaves as a 40 um chain, and that is what the traits should
-#              see -- the chain is the organism, ecologically.
-#   intercept  1.00 for diatoms, 0.55 for other eukaryotes (2.1/3.8, Ward).
-#   T_opt      thermal optimum, C. The niche is Gaussian about it, riding on
-#              the Eppley envelope so a warm-adapted type genuinely has a
-#              higher ceiling rather than merely a shifted one.
-#   T_width    and the width matters as much as the centre. The three diatoms
-#              started at optima of 12, 14 and 15 with widths of 12 to 14 --
-#              which is not three organisms, it is one organism with three
-#              drawings, and whichever was marginally best took all three
-#              niches. Chaetoceros socialis is a cold-water bloom former,
-#              Coscinodiscus a temperate-to-subtropical shelf diatom; giving
-#              them 8 C and 20 C with narrow widths is both truer and the
-#              thing that finally makes them different organisms.
-#   defence    multiplier on how readily this type is grazed. THIS IS THE
-#              TRADE-OFF, and leaving it out is what made the model collapse
-#              to one winner. Pure allometry says a small cell has both a
-#              higher growth rate and a lower half-saturation than a large
-#              one -- it is better at everything -- so with size as the only
-#              axis the smallest type wins the entire ocean, and it did: 91%
-#              of the voyage. What a large diatom buys with its size is not
-#              a physiological advantage, it is not being eaten. Chaetoceros
-#              setae are an anti-grazing structure, Coscinodiscus has a thick
-#              frustule, Ceratium has horns, the radiolarian has spines.
-#              Which is a happy convergence: the features that make an
-#              organism worth drawing are the same ones that make it hard to
-#              swallow. Coscinodiscus gets 0.30 rather than 0.50 for the same
-#              reason: a heavily silicified 100 um frustule is famously
-#              rejected by copepods, and at 0.50 it was strictly dominated by
-#              the chain on every axis and sat at 2% of the voyage.
-#   buoyancy   multiplier on the allometric sinking rate. Chains resist
-#              sinking, and so does a large centric -- Coscinodiscus is mostly
-#              vacuole and regulates its density, which is the whole reason a
-#              cell that size is viable. At buoyancy 1.0 it sank out of a 55 m
-#              column in under a week and went functionally extinct across the
-#              entire voyage. Motile forms barely sink at all.
-TRAITS = {
-    # -- the small class. Undefended, fast, and eaten by everything: this is
-    #    what the microzooplankton were missing and what a gyre runs on.
-    FLAGELLATE:  (   5.0, 0.55, 18.0, 15.0, 0.00, 1.00),
-    COCCO:       (   8.0, 0.55, 20.0, 12.0, 0.30, 0.45),
-    THALASSIO:   (  15.0, 1.00, 10.0, 10.0, 0.40, 0.60),
-    # -- diatoms, on three distinct thermal niches
-    PENNATE:     (  30.0, 1.00, 15.0,  9.0, 1.00, 1.00),
-    CHAIN:       (  40.0, 1.00,  8.0,  8.0, 0.45, 0.30),
-    CORETHRON:   (  80.0, 1.00,  3.0,  7.0, 0.40, 0.18),
-    CENTRIC:     ( 100.0, 1.00, 20.0,  9.0, 0.45, 0.30),
-    RHIZO:       ( 200.0, 1.00, 18.0, 10.0, 0.12, 0.22),
-    # -- the nitrogen fixer. Slow, warm-restricted, iron-hungry.
-    TRICHO:      ( 500.0, 0.97, 27.0,  6.0, 0.00, 0.15),
-    # Trichodesmium's intercept is set from the measurement, not guessed: it
-    # yields 0.25 divisions a day at its optimum, which is what Breitbarth et
-    # al. 2007 report. The intercept column is exactly where taxon-specific
-    # departure from the allometry belongs, and here it is carrying a real
-    # fact -- a 500 um COLONY is built of small cells, so it has small-cell
-    # physiology with large-cell grazing protection. Sizing it by the colony
-    # alone crushed it to 0.05 a day and it never appeared anywhere.
-    # -- mixotrophs: the gyre's ornate survivors
-    ORNITHO:     ( 100.0, 0.55, 27.0,  7.0, 0.05, 0.28),
-    CERATIUM:    ( 150.0, 0.55, 24.0,  8.0, 0.05, 0.35),
-    RADIOLARIAN: ( 300.0, 0.55, 25.0, 11.0, 0.10, 0.25),
-    ACANTHARIA:  ( 400.0, 0.55, 23.0, 12.0, 0.15, 0.15),
-    FORAM:       ( 500.0, 0.55, 22.0, 13.0, 0.50, 0.25),
-    # -- grazers
-    TINTINNID:   (  60.0, 0.55, 18.0, 12.0, 0.00, 0.60),
-    COPEPOD:     ( 1500.0, 0.55, 12.0, 14.0, 0.00, 1.00),
-    KRILL:       ( 6000.0, 0.55,  4.0,  8.0, 0.00, 1.00),
-    SALP:        ( 5000.0, 0.55, 17.0, 12.0, 0.00, 1.00),
-}
-
-# Optimal predator:prey length ratio, PER FEEDING TYPE.
-#
-# A single ratio of 10 for everything is the number Ward et al. use, and it is
-# a mean across all zooplankton rather than a fact about any of them. Hansen,
-# Bjornsen & Hansen (1994) measured it by group, and the groups differ by more
-# than an order of magnitude: copepods around 18:1, ciliates around 8:1,
-# dinoflagellates close to 1:1 because they engulf prey their own size.
-#
-# This is not a detail. At a flat 10:1 a 1500 um copepod's optimum is a 150 um
-# cell, so it grazed the large slow types hard and barely touched the small
-# fast ones -- which left the smallest, fastest-growing, lowest-half-saturation
-# type with the best traits in the model AND almost no predator. It took 88%
-# of the entire voyage. At the measured 18:1 the copepod's optimum moves to
-# 83 um, which sits between the centric and the pennate and grazes both.
-#
-# The lesson worth keeping: competitive exclusion here was not a bug in the
-# competition. It was a missing predator.
-GRAZE_RATIO = {
-    COPEPOD: 18.0,          # Hansen et al. 1994
-    KRILL: 60.0,            # a filter feeder: takes cells far smaller than a
-                            # copepod does relative to its size
-    SALP: 200.0,            # mucous-net filter, effectively unselective
-    TINTINNID: 8.0,         # ciliates
-    CERATIUM: 3.0,          # dinoflagellates engulf prey near their own size
-    ORNITHO: 3.0,
-    RADIOLARIAN: 5.0,       # large rhizarian, catches a wide range on spines
-    ACANTHARIA: 5.0,
-    FORAM: 5.0,
-}
-# Kernel width, per predator. A salp's mucous net is famously indiscriminate
-# -- it takes anything from bacteria to other salps -- so a narrow log-normal
-# would be the wrong shape entirely, not merely the wrong centre.
-GRAZE_W = {SALP: 2.2, KRILL: 1.3}
-GRAZE_SIGMA = 0.90         # width of the kernel, in natural logs. Ward et al.
-# use 0.5; 0.9 here because with only five drifters the size axis is sparse
-# and a narrow kernel leaves gaps that no predator covers. Stage 5's small
-# forms are what let this come back to the literature value.
-
-
-def _derive():
-    """Precompute the per-type rates once. On the MCU this is a const table
-    generated at build time; the point of computing it here is that the
-    allometry stays visible in the source instead of becoming magic numbers."""
-    out = {}
-    for k, (esd, icept, topt, twidth, buoy, defence) in TRAITS.items():
-        s = esd / ESD_REF
-        if esd >= ESD_PEAK:
-            mu = s ** MU_EXP
-        else:
-            mu = ((ESD_PEAK / ESD_REF) ** MU_EXP
-                  * (esd / ESD_PEAK) ** MU_EXP_SMALL)
-        out[k] = (
-            icept * mu,                        # 0 growth multiplier
-            s ** K_EXP,                        # 1 half-saturation multiplier
-            buoy * s ** W_EXP,                 # 2 sinking multiplier
-            topt, twidth,                      # 3, 4
-            Q10_EPPLEY ** (topt - T_REF),      # 5 Eppley ceiling at T_opt
-            math.log(esd),                     # 6 for the grazing kernel
-            RESPIRATION * s ** RESP_EXP,       # 7 -> shifted, see below
-            defence,                           # 8
-        )
-    return out
-
-
-DERIVED = _derive()
-
-
-def temp_factor(kind, T):
-    """Eppley envelope times a Gaussian niche.
-
-    The envelope alone would say every organism grows three times faster in
-    the tropics, which is why the warm oligotrophic Pacific was blooming. The
-    niche alone would lose the real fact that warm water genuinely does
-    support faster maximum growth. Both together say: each type has a
-    temperature it likes, and types that like warm water have a higher
-    ceiling when they get it."""
-    d = DERIVED[kind]
-    x = (T - d[3]) / d[4]
-    return d[5] * math.exp(-x * x)
-
-
-def graze_pref(pred_kind, prey_kind):
-    """Log-normal size preference. A copepod at 1500 um wants prey near
-    150 um; a tintinnid at 60 um wants 6 um. Nothing switches on species."""
-    ratio = GRAZE_RATIO.get(pred_kind, 10.0)
-    sig = GRAZE_W.get(pred_kind, GRAZE_SIGMA)
-    r = DERIVED[pred_kind][6] - DERIVED[prey_kind][6] - math.log(ratio)
-    return math.exp(-(r * r) / (2.0 * sig * sig)) * DERIVED[prey_kind][8]
-
-
-class Genome:
-    """A handful of numbers that fully determine an individual's appearance.
-    Same genome, same drawing, forever -- so a cell that divides produces two
-    daughters that look like siblings, not strangers."""
-
-    __slots__ = ("kind", "size", "sym", "ornament", "aspect", "curl", "seed",
-                 "jitter")
-
-    def __init__(self, kind, rng):
-        self.kind = kind
-        self.seed = rng.randrange(1 << 30)
-        # lognormal spread on maximum growth rate, sigma ~0.35. Two cells of
-        # the same type are not the same organism.
-        self.jitter = math.exp(rng.gauss(0.0, 0.35))
-        self.sym = rng.choice((6, 7, 8, 9, 10, 12))
-        self.ornament = rng.uniform(0.3, 1.0)
-        self.aspect = rng.uniform(0.25, 0.55)
-        self.curl = rng.uniform(-0.5, 0.5)
-        if kind == RADIOLARIAN:
-            self.size = rng.uniform(9, 15)
-        elif kind == CENTRIC:
-            self.size = rng.uniform(8, 14)
-        elif kind == PENNATE:
-            self.size = rng.uniform(11, 19)
-        elif kind == CHAIN:
-            self.size = rng.uniform(4.5, 7.0)
-        elif kind == CERATIUM:
-            self.size = rng.uniform(8, 12)
-        elif kind == TINTINNID:
-            self.size = rng.uniform(7, 10)
-        elif kind == COCCO:
-            self.size = rng.uniform(3.2, 5.0)
-        elif kind == FLAGELLATE:
-            self.size = rng.uniform(3.0, 4.4)
-        elif kind == THALASSIO:
-            self.size = rng.uniform(3.0, 4.6)
-        elif kind == RHIZO:
-            self.size = rng.uniform(4.0, 6.5)
-        elif kind == CORETHRON:
-            self.size = rng.uniform(5.0, 8.0)
-        elif kind == ACANTHARIA:
-            self.size = rng.uniform(9, 15)
-        elif kind == FORAM:
-            self.size = rng.uniform(6, 10)
-        elif kind == ORNITHO:
-            self.size = rng.uniform(7, 11)
-        elif kind == TRICHO:
-            self.size = rng.uniform(5.0, 8.0)
-        elif kind == SALP:
-            self.size = rng.uniform(4.5, 7.0)
-        elif kind == KRILL:
-            self.size = rng.uniform(7, 11)
-        else:
-            self.size = rng.uniform(8, 12)
-
-    def child(self, rng):
-        g = Genome.__new__(Genome)
-        g.kind = self.kind
-        g.seed = self.seed ^ rng.randrange(1 << 12)
-        g.sym = self.sym
-        g.ornament = max(0.2, min(1.0, self.ornament + rng.gauss(0, 0.05)))
-        g.aspect = max(0.2, min(0.7, self.aspect + rng.gauss(0, 0.03)))
-        g.curl = self.curl + rng.gauss(0, 0.06)
-        g.size = self.size * rng.uniform(0.93, 1.07)
-        # heritable, but it drifts -- so a lineage founded by a fast individual
-        # stays fast for a while and then regresses, rather than either being
-        # fixed forever or resampled from scratch every division
-        g.jitter = max(0.35, min(3.0, self.jitter * math.exp(rng.gauss(0.0, 0.12))))
-        return g
-
-
-def draw_radiolarian(c, cx, cy, r, ang, g):
-    """Spherical test, radial spines, a lattice between two shells."""
-    n = g.sym
-    c.circle(cx, cy, r)
-    inner = r * (0.48 + 0.14 * g.ornament)
-    c.circle(cx, cy, inner)
-    for i in range(n):
-        a = ang + 2 * math.pi * i / n
-        ca = math.cos(a); sa = math.sin(a)
-        # strut between the two shells
-        c.line(cx + inner * ca, cy + inner * sa, cx + r * ca, cy + r * sa)
-        # spine projecting beyond the test, with a terminal knob
-        tip = r * (1.42 + 0.30 * g.ornament)
-        c.line(cx + r * ca, cy + r * sa, cx + tip * ca, cy + tip * sa)
-        c.px(int(cx + tip * ca), int(cy + tip * sa))
-    # pored equator: small arcs between adjacent spines
-    if g.ornament > 0.55:
-        for i in range(n):
-            a0 = ang + 2 * math.pi * i / n
-            a1 = a0 + 2 * math.pi / n
-            mid = r * 0.78
-            c.arc(cx, cy, mid, a0, a1)
-
-
-def draw_centric(c, cx, cy, r, ang, g):
-    """Coscinodiscus-like. Concentric rings and radial striae."""
-    c.circle(cx, cy, r)
-    c.circle(cx, cy, r * 0.72)
-    if g.ornament > 0.5:
-        c.circle(cx, cy, r * 0.34)
-    n = int(10 + 14 * g.ornament)
-    for i in range(n):
-        a = ang + 2 * math.pi * i / n
-        ca = math.cos(a); sa = math.sin(a)
-        c.line(cx + r * 0.74 * ca, cy + r * 0.74 * sa,
-               cx + r * 0.97 * ca, cy + r * 0.97 * sa)
-    # central pore
-    c.px(int(cx), int(cy))
-
-
-def draw_pennate(c, cx, cy, r, ang, g):
-    """Navicula-like boat. Two arcs, a raphe, transverse striae."""
-    half = r
-    width = r * g.aspect
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def to_world(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    top = []; bot = []
-    steps = 14
-    for i in range(steps + 1):
-        t = -1.0 + 2.0 * i / steps
-        # lens profile, pointed at both ends
-        v = width * (1.0 - t * t) ** 0.62
-        top.append(to_world(t * half, -v))
-        bot.append(to_world(t * half, v))
-    c.polyline(top)
-    c.polyline(bot)
-    c.line(top[0][0], top[0][1], bot[0][0], bot[0][1])
-    c.line(top[-1][0], top[-1][1], bot[-1][0], bot[-1][1])
-    # raphe
-    p0 = to_world(-half * 0.86, 0); p1 = to_world(half * 0.86, 0)
-    c.line(p0[0], p0[1], p1[0], p1[1])
-    # striae. Gated on size: at r under 5 the cross-lines land on adjacent
-    # pixels and fill the cell in solid, so the lens silhouette -- the only
-    # thing that identifies it -- disappears into a blob.
-    if r < 5.0:
-        return
-    n = int(6 + 8 * g.ornament)
-    for i in range(1, n):
-        t = -1.0 + 2.0 * i / n
-        v = width * (1.0 - t * t) ** 0.62
-        a = to_world(t * half, -v * 0.85)
-        b = to_world(t * half, v * 0.85)
-        c.line(a[0], a[1], b[0], b[1])
-
-
-def draw_chain(c, cx, cy, r, ang, g, phase=0.0):
-    """Chaetoceros. Boxy cells in a row with long crossing setae -- the most
-    instantly readable phytoplankton silhouette there is.
-
-    The setae are silica and the cell has no muscles, so nothing here beats.
-    They flex, a few per cent, the way a thin stiff rod does in moving water,
-    and the tips travel further than the bases. That distinction is the whole
-    point: a diatom that appeared to be swimming would be a lie, and a
-    diatom that is perfectly rigid in water is a different one."""
-    n_cells = 3 + int(g.ornament * 3)
-    cw = r                       # half-width along the chain
-    ch = r * 1.15                # half-height across it
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def to_world(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    total = n_cells * 2 * cw
-    u0 = -total / 2.0
-    for i in range(n_cells):
-        a = u0 + i * 2 * cw
-        b = a + 2 * cw
-        corners = [to_world(a, -ch), to_world(b, -ch),
-                   to_world(b, ch), to_world(a, ch)]
-        c.polyline(corners, close=True)
-        # setae from both ends of each cell, swept and curved
-        for u, sgn in ((a, -1), (b, -1), (a, 1), (b, 1)):
-            pts = []
-            L = r * 3.4
-            sway = math.sin(phase + i * 0.5 + (0.0 if sgn > 0 else 1.6)) * 0.16
-            for k in range(5):
-                t = k / 4.0
-                # t*t, not t: a cantilever's deflection grows faster than
-                # its length, so the base barely moves and the tip does
-                pts.append(to_world(u + L * t * 0.30 * (1 if sgn > 0 else -1)
-                                    + L * t * g.curl * 0.4
-                                    + L * t * t * sway,
-                                    sgn * (ch + L * t)))
-            c.polyline(pts)
-
-
-def draw_ceratium(c, cx, cy, r, ang, g):
-    """Dinoflagellate with one apical and two antapical horns."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def to_world(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    body_w = r * 0.40
-    pts_l = []; pts_r = []
-    steps = 10
-    for i in range(steps + 1):
-        t = -1.0 + 2.0 * i / steps
-        v = body_w * (1.0 - t * t) ** 0.5
-        pts_l.append(to_world(t * r * 0.55, -v))
-        pts_r.append(to_world(t * r * 0.55, v))
-    c.polyline(pts_l)
-    c.polyline(pts_r)
-    # girdle
-    gl = to_world(0, -body_w * 0.95); gr = to_world(0, body_w * 0.95)
-    c.line(gl[0], gl[1], gr[0], gr[1])
-    # apical horn
-    apex = to_world(-r * 0.55, 0)
-    tip = to_world(-r * 1.75, r * 0.12 * g.curl)
-    c.line(apex[0], apex[1], tip[0], tip[1])
-    # two antapical horns
-    for sgn in (-1, 1):
-        base = to_world(r * 0.5, sgn * body_w * 0.6)
-        mid = to_world(r * 1.05, sgn * body_w * 1.5)
-        end = to_world(r * 1.45, sgn * body_w * 3.0)
-        c.polyline([base, mid, end])
-
-
-# --------------------------------------------------------------------------
-# MOVING PARTS
-# --------------------------------------------------------------------------
-#
-# `phase` is radians of the organism's own beat cycle, and every draw
-# function that has something to beat takes it with a default of zero, so
-# nothing that does not care has to know it exists.
-#
-# It is used on the key plate, where a specimen is drawn at fifteen pixels of
-# radius and is the thing a visitor is staring at, and NOT in the water,
-# where the same animal is nine pixels and an antenna is one. That is not
-# laziness: sub-pixel appendage motion is a way of spending frame time on
-# something nobody can see. If the water ever draws them larger, the argument
-# changes and the parameter is already there.
-#
-# What moves is what actually moves. A copepod's first antennae are the
-# power stroke -- it rows with them -- and the urosome flexes; krill beat
-# five pairs of pleopods in a metachronal wave, back to front; a salp swims
-# by squeezing its whole barrel and jetting the water out. None of this is
-# invented.
-
-
-def draw_copepod(c, cx, cy, r, ang, g, gravid=False, phase=0.0):
-    """The grazer. Prosome, urosome, antennae, caudal setae.
-
-    The antennae row: swept forward on the recovery and back through the
-    power stroke, and the urosome flexes a few degrees against it because
-    the whole animal is one lever."""
-    ca = math.cos(ang); sa = math.sin(ang)
-    beat = math.sin(phase)
-    flex = math.sin(phase - 0.6) * 0.10          # urosome lags the stroke
-
-    def to_world(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    bw = r * 0.42
-    left = []; right = []
-    steps = 10
-    for i in range(steps + 1):
-        t = i / steps
-        # teardrop: broad at the head, tapering aft
-        v = bw * (1.0 - t) ** 0.5 * (0.45 + 0.55 * math.sin(math.pi * (0.25 + 0.75 * t)))
-        u = -r * 0.75 + t * r * 1.15
-        left.append(to_world(u, -v))
-        right.append(to_world(u, v))
-    c.polyline(left)
-    c.polyline(right)
-    c.line(left[0][0], left[0][1], right[0][0], right[0][1])
-    # urosome: three tapering segments, each one bent a little further off
-    # the axis than the last, so the tail curves rather than hinging
-    u = r * 0.40
-    off = 0.0
-    for k in range(3):
-        wseg = bw * (0.34 - 0.07 * k)
-        off += flex * r * 0.22
-        a = to_world(u, -wseg + off); b = to_world(u + r * 0.18, -wseg + off)
-        d = to_world(u + r * 0.18, wseg + off); e = to_world(u, wseg + off)
-        c.polyline([a, b, d, e])
-        u += r * 0.18
-    # caudal setae
-    for sgn in (-1, 1):
-        s0 = to_world(u, sgn * bw * 0.18 + off)
-        s1 = to_world(u + r * 0.55, sgn * bw * 0.55 + off + flex * r * 0.5)
-        c.line(s0[0], s0[1], s1[0], s1[1])
-    # first antennae. Two joints, so the tip travels further than the base
-    # and the limb reads as flexible rather than as a rotating stick.
-    sweep = beat * r * 0.42
-    droop = beat * 0.30
-    for sgn in (-1, 1):
-        a0 = to_world(-r * 0.62, sgn * bw * 0.35)
-        a1 = to_world(-r * 0.20 + sweep * 0.45, sgn * bw * (1.5 + droop))
-        a2 = to_world(r * 0.45 + sweep, sgn * bw * (2.3 + droop * 1.8))
-        c.polyline([a0, a1, a2])
-    if gravid:
-        eg = to_world(r * 0.42, bw * 0.9)
-        c.circle(eg[0], eg[1], max(2, r * 0.20))
-
-
-def draw_tintinnid(c, cx, cy, r, ang, g):
-    """Ciliate in a conical lorica with a ciliary fringe at the rim.
-    A heterotroph -- it eats small cells and detritus."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    rim = r * 0.60
-    L = r * 1.5
-    base_u = -L * 0.35
-    apex = tw(L * 0.85, 0)
-    c.line(*(tw(base_u, -rim) + apex))
-    c.line(*(tw(base_u, rim) + apex))
-
-    lip = []
-    for i in range(9):
-        t = -1.0 + 2.0 * i / 8
-        lip.append(tw(base_u - rim * 0.30 * (1 - t * t), t * rim))
-    c.polyline(lip)
-
-    for k in (0.30, 0.58):
-        w = rim * (1.0 - k * 0.85)
-        c.line(*(tw(base_u + L * 1.2 * k, -w) + tw(base_u + L * 1.2 * k, w)))
-
-    for i in range(7):
-        t = -1.0 + 2.0 * i / 6
-        u = base_u - rim * 0.30 * (1 - t * t)
-        c.line(*(tw(u, t * rim) + tw(u - r * 0.55, t * rim * 1.3)))
-
-
-# --------------------------------------------------------------------------
-# The eleven added in Stage 5.
-#
-# One rule governs all of them, and it comes out of the measurement in the
-# plan: at r = 3 an organism is about seven pixels across, and the only kind
-# of feature that survives at seven pixels is an OUTLINE. Anything whose
-# identity lives in interior detail becomes a blob. So each of these is
-# designed around a silhouette -- a scalloped rim, a straight rod through a
-# centre, a row of hoops, a needle -- and the interior detail is what appears
-# as it grows, not what it depends on.
-# --------------------------------------------------------------------------
-
-
-def draw_coccolithophore(c, cx, cy, r, ang, g):
-    """Emiliania. A sphere plated with overlapping oval coccoliths.
-
-    The tell is the EDGE, not the plates: a coccosphere's outline is broken
-    into shallow scallops where the rims of the plates stand proud. That
-    survives to r = 3, where the scallops are one-pixel notches and it still
-    is not a circle -- which is the whole reason this is the small organism
-    the roster needed."""
-    # Fewer, deeper scallops when small. At r = 3 a circumference of about
-    # nineteen pixels cannot carry fourteen notches -- they alias into a
-    # smooth circle, which is the one thing this must not look like.
-    n = (7 if r < 5.0 else 10 + int(4 * g.ornament))
-    amp = 0.24 if r < 5.0 else 0.14
-    pts = []
-    steps = max(14, int(r * 3))
-    for i in range(steps):
-        a = ang + 2 * math.pi * i / steps
-        rr = r * (1.0 + amp * math.cos(n * (a - ang)))
-        pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
-    c.polyline(pts, close=True)
-    if r >= 5.5:
-        # a few plates seen face-on across the near hemisphere
-        for k in range(3):
-            a = ang + 2.4 * k + g.curl
-            px = cx + r * 0.42 * math.cos(a)
-            py = cy + r * 0.42 * math.sin(a)
-            c.ellipse(px, py, r * 0.34, r * 0.22, a + 1.2)
-
-
-def draw_flagellate(c, cx, cy, r, ang, g):
-    """A small naked flagellate -- cryptophyte, Micromonas, the nanoplankton
-    that has no defence and no ornament and is eaten by everything.
-
-    At r = 3 this is a dot with two hairs. Two hairs is enough: it says alive
-    rather than detritus, which is the only distinction that matters at this
-    size and the reason marine snow cannot be mistaken for it."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    # Fatter than a diatom and blunter than a dinoflagellate: at r = 3 the
-    # body has to read as a bulb, or two trailing flagella make it look like
-    # a small Ceratium, which is a different organism in a different ocean.
-    w = r * 0.78
-    pts = []
-    for i in range(13):
-        t = -1.0 + 2.0 * i / 12
-        # teardrop: blunt at the front, drawn out aft
-        v = w * (1.0 - t) ** 0.55 * (1.0 + t) ** 0.85 * 0.78
-        pts.append(tw(t * r, -v))
-    for i in range(12, -1, -1):
-        t = -1.0 + 2.0 * i / 12
-        v = w * (1.0 - t) ** 0.55 * (1.0 + t) ** 0.85 * 0.78
-        pts.append(tw(t * r, v))
-    c.polyline(pts, close=True)
-    # The two flagella have to diverge, or at small r they land on the same
-    # pixels and it reads as one tail -- which is a different organism.
-    for sgn in (-1, 1):
-        f = []
-        for k in range(5):
-            t = k / 4.0
-            u = r * (1.0 + 1.05 * t)
-            v = sgn * (w * 0.35 + r * 0.75 * t * t) + sgn * 0.22 * r * math.sin(g.curl * 4)
-            f.append(tw(u, v))
-        c.polyline(f)
-
-
-def draw_thalassiosira(c, cx, cy, r, ang, g):
-    """Small centrics strung on a single central thread.
-
-    The thread is the tell, not the cell. A dotted line of discs reads at any
-    size, which is why this works small where a lone small centric would just
-    be a ring."""
-    n = 3 + int(g.ornament * 3)
-    ca = math.cos(ang); sa = math.sin(ang)
-    gap = r * 2.6
-    u0 = -gap * (n - 1) * 0.5
-    prev = None
-    for i in range(n):
-        u = u0 + i * gap
-        px = cx + u * ca
-        py = cy + u * sa
-        c.circle(px, py, r)
-        if r >= 4.0:
-            c.px(int(px), int(py))
-        if prev is not None:
-            c.line(prev[0], prev[1], px, py)
-        prev = (px, py)
-
-
-def draw_rhizosolenia(c, cx, cy, r, ang, g):
-    """A needle. Aspect twelve to one, which makes it the most elongated
-    thing in the set and therefore unmistakable at any size -- there is
-    nothing else it could be confused with, because nothing else is a line."""
-    L = r * 3.4
-    w = r * 0.30
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    top = []; bot = []
-    for i in range(11):
-        t = -1.0 + 2.0 * i / 10
-        v = w * (1.0 - t * t) ** 0.30
-        top.append(tw(t * L, -v))
-        bot.append(tw(t * L, v))
-    c.polyline(top)
-    c.polyline(bot)
-    for sgn in (-1, 1):
-        a = tw(sgn * L, 0)
-        b = tw(sgn * L * 1.30, sgn * w * 0.5 * g.curl)
-        c.line(a[0], a[1], b[0], b[1])
-    if r >= 5.0:
-        n = 3 + int(3 * g.ornament)
-        for i in range(1, n):
-            t = -1.0 + 2.0 * i / n
-            p = tw(t * L, -w * 0.9)
-            q = tw(t * L, w * 0.9)
-            c.line(p[0], p[1], q[0], q[1])
-
-
-def draw_corethron(c, cx, cy, r, ang, g, phase=0.0):
-    """Two spiky pom-poms joined by a stub. A stubby barrel with a coronet of
-    long spines from each end face -- a Southern Ocean diatom, and one of the
-    few things in the set whose silhouette is symmetric about both axes.
-
-    Passive flex again, and out of phase end to end, because the two coronets
-    are at opposite ends of a rigid box and the water reaches them at
-    different moments."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    hl = r * 0.75
-    hw = r * 0.62
-    c.polyline([tw(-hl, -hw), tw(hl, -hw), tw(hl, hw), tw(-hl, hw)], close=True)
-    n = 5 + int(4 * g.ornament)
-    for sgn in (-1, 1):
-        sway = math.sin(phase + (0.0 if sgn > 0 else 1.9)) * r * 0.22
-        for i in range(n):
-            f = -1.0 + 2.0 * i / (n - 1)
-            a = tw(sgn * hl, f * hw)
-            b = tw(sgn * (hl + r * 1.9),
-                   f * hw * 1.9 + sgn * r * 0.3 * g.curl + sway)
-            c.line(a[0], a[1], b[0], b[1])
-
-
-def draw_acantharia(c, cx, cy, r, ang, g):
-    """Twenty spicules, arranged as ten rods passing through one centre.
-
-    That is Muller's law and it is exactly what makes this readable: the
-    spicules are perfectly straight and they all meet, so at r = 3 it is a
-    star of clean lines rather than the fuzz a radiolarian becomes. The body
-    is deliberately small -- a quarter of the diameter -- because the
-    body-to-spike ratio is the only thing separating it from everything else
-    that is spiky."""
-    body = r * 0.26
-    if r >= 4.5:
-        c.circle(cx, cy, body)
-    else:
-        c.px(int(cx), int(cy))
-    # Ten rods is Muller's law and it is right at full size. At r = 3 twenty
-    # spicule tips fall on a circumference of nineteen pixels and the star
-    # fills in solid, so the count drops and the shape survives instead.
-    n = 10 if r >= 6.0 else (7 if r >= 4.0 else 5)
-    for i in range(n):
-        a = ang + math.pi * i / n
-        ca = math.cos(a); sa = math.sin(a)
-        c.line(cx - r * ca, cy - r * sa, cx + r * ca, cy + r * sa)
-
-
-def draw_foraminiferan(c, cx, cy, r, ang, g):
-    """Globigerina. Four or five chambers in a spiral, each about a third
-    larger than the last and overlapping it by half -- a lobed cluster of
-    grapes, which is a silhouette nothing else in the set produces."""
-    n = 4 if r >= 5.0 else 3
-    rr = r * 0.46
-    a = ang
-    px, py = cx - r * 0.3, cy - r * 0.2
-    for i in range(n):
-        c.circle(px, py, rr)
-        a += 1.55
-        step = rr * 1.15
-        px += step * math.cos(a)
-        py += step * math.sin(a)
-        rr *= 1.30
-    if r >= 8.0:
-        # the spinose kind: a few long radial spines from the last chamber
-        for k in range(5):
-            b = ang + 0.7 + k * 1.15
-            cb, sb = math.cos(b), math.sin(b)
-            c.line(px + rr * 0.9 * cb, py + rr * 0.9 * sb,
-                   px + rr * 1.9 * cb, py + rr * 1.9 * sb)
-
-
-def draw_ornithocercus(c, cx, cy, r, ang, g):
-    """A small body engulfed by two enormous fenestrated sails. The most
-    ornate and most asymmetric outline available, and a warm-gyre organism --
-    which is the point, since the gyres are where the roster needed
-    something worth looking at."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    b = r * 0.32
-    if r >= 4.5:
-        c.ellipse(cx, cy, b * 1.15, b, ang)
-    else:
-        c.px(int(cx), int(cy))
-    for sgn in (-1, 1):
-        rim = []
-        ribs = (2 if r < 5.0 else 4 + int(4 * g.ornament))
-        for i in range(ribs + 1):
-            t = -1.0 + 2.0 * i / ribs
-            u = t * r * 1.05
-            v = sgn * (b + r * 0.95 * (1.0 - t * t) ** 0.55)
-            rim.append(tw(u, v))
-            base = tw(u * 0.42, sgn * b * 0.85)
-            c.line(base[0], base[1], rim[-1][0], rim[-1][1])
-        c.polyline(rim)
-    tip = tw(-r * 1.25, r * 0.10 * g.curl)
-    apex = tw(-b * 1.1, 0)
-    c.line(apex[0], apex[1], tip[0], tip[1])
-
-
-def draw_trichodesmium(c, cx, cy, r, ang, g):
-    """A tuft of parallel filaments with frayed ends -- the nitrogen fixer,
-    and the reason the subtropical gyres are habitable at all.
-
-    Drawn as a bundle rather than a cell because that is what you see: a
-    raft of trichomes, which at sea is visible from the deck as 'sea
-    sawdust'."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    # Filament count follows the width available. At r = 3 the bundle is four
-    # pixels across and eleven filaments is a solid black bar.
-    n = (3 if r < 4.0 else (5 if r < 6.5 else 6 + int(5 * g.ornament)))
-    L = r * 2.6
-    for i in range(n):
-        f = -1.0 + 2.0 * i / (n - 1)
-        v = f * r * 0.72
-        wob = 0.20 * r * math.sin(f * 5.0 + g.curl * 4.0)
-        pts = []
-        for k in range(5):
-            t = -1.0 + 2.0 * k / 4
-            spread = 1.0 + 0.35 * t * t          # frayed at the ends
-            pts.append(tw(t * L, v * spread + wob * (1.0 - t * t)))
-        c.polyline(pts)
-
-
-def draw_salp(c, cx, cy, r, ang, g, phase=0.0):
-    """A chain of hooped barrels. The most distinctive silhouette on the
-    whole list -- nothing else looks remotely like it, at any size.
-
-    It swims by squeezing. The muscle bands contract, the barrel narrows and
-    lengthens, and the water leaves out of the back -- so the animation here
-    is the body itself rather than anything attached to it, and each zooid
-    in the chain contracts a little after the one in front."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    n = 3 + int(g.ornament * 3)
-    ul = r * 1.05
-    hw = r * 0.52
-    u0 = -(n - 1) * ul
-    for i in range(n):
-        # a contraction is quick and the refill is slow, so the waveform is
-        # not a sine: squared-off on the way in, eased on the way out
-        p = (phase - i * 0.7) % (2.0 * math.pi) / (2.0 * math.pi)
-        squeeze = math.exp(-p * 5.0) * 0.30
-        hwi = hw * (1.0 - squeeze)
-        uli = ul * (1.0 + squeeze * 0.35)
-        u = u0 + i * 2 * ul
-        c.polyline([tw(u - uli * 0.86, -hwi), tw(u + uli * 0.86, -hwi)])
-        c.polyline([tw(u - uli * 0.86, hwi), tw(u + uli * 0.86, hwi)])
-        hoops = 3 + int(3 * g.ornament)
-        for k in range(hoops):
-            t = -0.80 + 1.60 * k / max(1, hoops - 1)
-            pp = tw(u + t * uli, -hwi)
-            q = tw(u + t * uli, hwi)
-            c.line(pp[0], pp[1], q[0], q[1])
-        e = tw(u + uli * 0.30, hwi * 0.35)
-        c.px(int(e[0]), int(e[1]))
-
-
-def draw_krill(c, cx, cy, r, ang, g, phase=0.0):
-    """Segmented rod plus a tail fan, against the copepod's teardrop plus whip
-    antennae. Those two silhouettes are the reason both can be in the set.
-
-    Five pairs of pleopods beating in a metachronal wave -- each pair a
-    little behind the one in front, so the beat travels down the animal
-    instead of all five swinging together. That travelling wave is the
-    single most recognisable thing about a swimming euphausiid, and it costs
-    five short lines."""
-    ca = math.cos(ang); sa = math.sin(ang)
-
-    def tw(u, v):
-        return (cx + u * ca - v * sa, cy + u * sa + v * ca)
-
-    hw = r * 0.34
-    L = r * 1.35
-    c.polyline([tw(-L, -hw * 0.8), tw(-L * 0.35, -hw),
-                tw(L * 0.55, -hw * 0.55), tw(L * 0.55, hw * 0.55),
-                tw(-L * 0.35, hw), tw(-L, hw * 0.8)], close=True)
-    for k in range(1, 6):
-        u = -L * 0.35 + (L * 0.90) * k / 6.0
-        c.line(*(tw(u, -hw * 0.9) + tw(u, hw * 0.9)))
-    for sgn in (-1, 1):                        # tail fan
-        a = tw(L * 0.55, sgn * hw * 0.5)
-        b = tw(L * 1.25, sgn * hw * 1.7)
-        d = tw(L * 1.15, 0)
-        c.polyline([a, b, d])
-    for k in range(5):                         # pleopods, metachronal
-        u = -L * 0.20 + (L * 0.70) * k / 4.0
-        sw = math.sin(phase - k * 0.9)         # each pair lags the one ahead
-        tipu = u + r * 0.30 * sw
-        tipv = hw * (0.95 + 0.55 * abs(math.cos(phase - k * 0.9)))
-        c.line(*(tw(u, hw * 0.85) + tw(tipu, tipv)))
-    for sgn in (-1, 1):                        # stalked eyes and antennae
-        e = tw(-L * 1.05, sgn * hw * 0.55)
-        c.px(int(e[0]), int(e[1]))
-        trail = math.sin(phase * 0.5) * hw * 0.35
-        c.line(*(tw(-L, sgn * hw * 0.4)
-                 + tw(-L * 1.7, sgn * hw * 1.0 + trail)))
-
-
-DRAW = {
-    RADIOLARIAN: draw_radiolarian,
-    CENTRIC: draw_centric,
-    PENNATE: draw_pennate,
-    CHAIN: draw_chain,
-    CERATIUM: draw_ceratium,
-    TINTINNID: draw_tintinnid,
-    COCCO: draw_coccolithophore,
-    FLAGELLATE: draw_flagellate,
-    THALASSIO: draw_thalassiosira,
-    RHIZO: draw_rhizosolenia,
-    CORETHRON: draw_corethron,
-    ACANTHARIA: draw_acantharia,
-    FORAM: draw_foraminiferan,
-    ORNITHO: draw_ornithocercus,
-    TRICHO: draw_trichodesmium,
-    SALP: draw_salp,
-    KRILL: draw_krill,
-}
-
-
-# --------------------------------------------------------------------------
-# 5. ECOSYSTEM  -  NPZ dynamics carried by individual agents
-# --------------------------------------------------------------------------
 
 def _wrap_pi(d):
-    """Shortest signed angle. Steering toward a heading without this turns
-    the long way round about half the time."""
-    return (d + math.pi) % (2.0 * math.pi) - math.pi
+    while d > math.pi:
+        d -= 2.0 * math.pi
+    while d < -math.pi:
+        d += 2.0 * math.pi
+    return d
 
 
 class Agent:
-    __slots__ = ("g", "x", "z", "ang", "body", "phase", "vel", "mass", "age",
-                 "vigour", "gravid", "flash", "vis", "doomed", "mode", "head")
+    """One fish. Everything about an individual that is not in its species."""
 
-    def __init__(self, g, x, z, mass, rng, vis=0.02):
-        self.g = g
+    __slots__ = ("key", "x", "z", "r", "head", "body", "phase", "vis",
+                 "dying", "jit", "flip")
+
+    def __init__(self, key, x, z, r, rng):
+        self.key = key
         self.x = x
         self.z = z
-        self.head = rng.uniform(0, 2 * math.pi)   # where it means to go
-        self.body = self.head                     # where it is actually pointing
-        self.ang = self.body + math.pi            # what gets drawn
-        self.phase = rng.uniform(0, 10.0)         # gait clock, so they are not
-        self.vel = 0.0                            # in step with one another
-        self.mass = mass
-        self.age = 0.0
-        self.vigour = 1.0
-        self.gravid = False
-        self.flash = 0.0
-        self.vis = vis            # 0..1 visual presence. This is what stops
-        self.doomed = False       # cells popping in and out of existence.
-        self.mode = TROPHY[g.kind]
-
-
-class Detritus:
-    """Dead organic matter. Sinks, remineralises to ammonium at whatever
-    depth it reaches, and can be eaten on the way down. This is what closes
-    the nitrogen loop and feeds the chemoautotrophs."""
-
-    __slots__ = ("x", "z", "mass", "offs")
-
-    def __init__(self, x, z, mass, rng):
-        self.x = x
-        self.z = z
-        self.mass = mass
-        n = 2 + int(min(3.0, mass) * 2)
-        self.offs = [(rng.gauss(0, 1.7), rng.gauss(0, 1.7)) for _ in range(n)]
-
-
-R_MIN = 3.0
-# Measured, not guessed. Rendering each morphology at descending radii and
-# counting ink: below about 3.0 every one of them collapses into a blob --
-# the radiolarian loses its spines, the centric loses its central pore, the
-# tintinnid stops being a cone. At 3.0 all seven are still structured, and a
-# radial form is about 7 px across. Marine snow is 1 to 2 px, so there is a
-# clean threefold gap between the smallest organism and the largest speck,
-# which is what keeps them separate categories rather than a continuum.
-
-
-def visual_radius(a):
-    """Single source of truth for on-screen size, used by both the renderer
-    and the separation force so the two cannot disagree.
-
-    The floor is applied before the fade, not after: a fully arrived cell is
-    never drawn below the legibility threshold, but one that is still fading
-    in still grows into place rather than popping."""
-    r = a.g.size * (0.30 + 0.70 * min(1.6, a.mass) / 1.6)
-    return max(R_MIN, r) * a.vis
+        # RANK WITHIN THE DEPTH BAND, FIXED FOR LIFE. This one number is what
+        # makes the deep scattering layer a layer: every individual keeps its
+        # place in the band as the band moves, so at dusk the whole thing
+        # rises together and holds its shape. Re-randomising the depth each
+        # frame gives the same average migration and looks like static.
+        self.r = r
+        self.head = rng.uniform(0.0, 2.0 * math.pi)
+        self.body = self.head
+        self.phase = rng.uniform(0.0, 2.0 * math.pi)
+        self.vis = 0.02
+        self.dying = False
+        # lognormal spread on length, so a shoal is not a rubber stamp
+        self.jit = math.exp(rng.gauss(0.0, 0.16))
+        self.flip = 0
 
 
 class Ecosystem:
+    """The water column at the ship, and the fish in it.
+
+    Named for continuity with the module it replaces and with the three
+    screens that ask it questions. It carries no ecology in the NPZ sense --
+    what it carries is an assemblage, a population that relaxes toward it, and
+    the swimming."""
+
     def __init__(self, seed=None, start_day=0.0, track=None, ocean=None):
         self.rng = random.Random(seed)
-        self.env = Environment(self.rng, track, ocean)
-        self.track = track
         self.t = start_day
-        r = self.rng
-        # Depth-resolved nitrogen in two pools. New production (nitrate) and
-        # regenerated production (ammonium) behave differently, and the
-        # difference is exactly what the chemoautotrophs live on.
-        self.no3 = [3.0 + N_DEEP * (i / NBINS) ** 1.4 for i in range(NBINS)]
-        self.nh4 = [0.25] * NBINS
-        self.nit = [0.06] * NBINS          # chemoautotroph biomass per bin
-        self.pico = [0.35] * NBINS         # picoplankton, the unresolved
-                                           # small-cell class. See the note.
+        self.real_t = 0.0
+        self.time_compression = 60.0
+        self.env = Environment(self.rng, track, ocean)
         self.agents = []
-        self.det = []
-        self._graze_f = 1.0
-        # per-instance so that several ecosystems with different swimming
-        # speeds can be run side by side in one process, which is the only
-        # way to compare them honestly -- sequentially you are comparing the
-        # second one against your memory of the first
+        self.assemblage = []          # [(key, suitability)], richest first
+        self.ab = {}                  # key -> standing biomass here
+        self.want = {}                # key -> fish to draw, from that biomass
+        self.have = {}                # key -> smoothed present count
+        self.shoal_head = {}          # key -> the shoal's collective heading
         self.swim_scale = SWIM_SCALE
         self.turn_scale = TURN_SCALE
-        self._acc = 0.0            # simulated days owed to the ecology
-        # Two clocks, and both are needed once the ecology stops running
-        # every frame.
-        #
-        #   self.t    simulated days, and it now advances in ECO_DT jumps
-        #   self.now  the same thing without the staircase, for anything a
-        #             person reads: position, date, progress bar
-        #   real_t    REAL seconds since the start, which is what any
-        #             animation has to run on
-        #
-        # The key plate used to take its clock from `t * 86400`, which was
-        # right only because `t` used to move every frame. The moment the
-        # ecology went hourly the specimens froze solid for an hour at a
-        # time and then jumped -- which reads, from across a room, as
-        # imperceptibly slow swimming.
-        self.real_t = 0.0
-        self._restock_at = 0.0
-        # what the last ecology tick thought the panel should be carrying;
-        # the restocker tops up towards it and never past it
-        self._n_target_seen = 0
-        self._nz_target_seen = 0
-        self.snow = [[r.uniform(0, W), r.uniform(0, H),
-                      r.uniform(0.6, 2.4), r.random() < 0.30]
-                     for _ in range(SNOW_COUNT)]
-        for _ in range(14):
-            self._spawn_drifter().vis = 1.0
-        for _ in range(3):
-            self._spawn_het(COPEPOD).vis = 1.0
-        for _ in range(2):
-            self._spawn_het(TINTINNID).vis = 1.0
+        self.prod = 0.0
+        self.season = 1.0
+        self.bottom = 6000.0
+        self.sun = 0.0
+        self.n_want = N_FLOOR
+        self.n_band = (0, 0)
+        self._eco_due = 0.0
+        self._sample()
+        self._restock(instant=True)
 
-    # -- helpers -----------------------------------------------------------
-
-    def _bin(self, z):
-        i = int(z / BIN_M)
-        return 0 if i < 0 else (NBINS - 1 if i >= NBINS else i)
-
-    def _fitness(self, t):
-        """Realised growth rate per drifter type in the water the ship is
-        entering, as the weights for what arrives.
-
-        This is the part that makes advection honest rather than a lookup. We
-        are not saying which organisms live here; we are computing, from the
-        same traits and the same equations the resident cells use, which ones
-        would be growing in the water upstream -- because that water has been
-        growing them. Eighteen evaluations of an expression the model already
-        contains, once per step."""
-        env = self.env
-        surface = env.surface_light(t)
-        chl = self.biomass / MAX_PHYTO
-        I = self.light_at(8.0, surface, chl)
-        T = env.temperature(t, 8.0)
-        mld = env.mixed_layer_depth(t)
-        n = self._deep_n
-        fe = self._iron
-        r = mld / Z_MAX
-        out = {}
-        for k in DRIFTER_KINDS:
-            d = DERIVED[k]
-            if k in DIAZOTROPHS:
-                f_nut = (fe / (fe + 0.12 * d[1] * DIAZO_FE_COST)
-                         if T >= DIAZO_T_MIN else 0.0)
-            else:
-                ks = K_S * d[1]
-                f_nut = min(1.0, n / (n + ks), fe / (fe + 0.12 * d[1]))
-            mu = (MU_MAX * d[0] * (I / (I + I_K)) * f_nut * temp_factor(k, T)
-                  - d[7] - 0.30 * r / (0.55 + r))
-            if TROPHY[k] == MIXO:
-                mu = 0.62 * mu + 0.10        # mixotrophs eat as well
-            out[k] = max(0.0, mu)
-        return out
-
-    def _capacity(self, t):
-        """How much life this water can carry, uncapped. The compression to a
-        countable number of sprites happens once, here, rather than being
-        smeared across a cap and a cull.
-
-        Nutrient supply times an iron ceiling times a light-and-temperature
-        gate -- which is deliberately the same combination the satellite check
-        found correlates with real chlorophyll at rho +0.68, because that
-        measurement is the best evidence available for what sets standing
-        stock. The first attempt used the best instantaneous growth RATE
-        instead, which is a different quantity: a rate goes to zero in polar
-        winter while the standing stock does not, and capacity collapsed to
-        the floor over half the voyage."""
-        env = self.env
-        I = self.light_at(6.0, env.daily_light(t), self.biomass / MAX_PHYTO)
-        T = env.temperature(t, 6.0)
-        mld = env.mixed_layer_depth(t)
-        # growth potential ignoring nutrients: can anything grow here at all?
-        g = max(MU_MAX * DERIVED[k][0] * temp_factor(k, T) for k in PHOTO_KINDS)
-        g *= I / (I + I_K)
-        gate = g / (g + 0.55)
-        deep = 0.35 + 0.65 / (1.0 + (mld / (2.2 * Z_MAX)) ** 2)
-        return self._deep_n * self._iron * gate * deep
-
-    def _advect(self, dt, t):
-        """Replace the water as the ship moves through it.
-
-        Departures are random: advection does not care how fit a cell is.
-        Arrivals are fitness-weighted, because they come from water that has
-        been growing them. And the number of them follows the capacity of the
-        water ahead, compressed -- so the count tracks the ocean while each
-        individual's mass, and which type actually thrives, stay in the hands
-        of the local dynamics. A bloom is still something that happens."""
-        if self.track is None:
-            return
-        rng = self.rng
-        speed = self.track.speed(t)
-        rate = FLUSH_PER_100KM * speed / 100.0
-        cap = self._capacity(t)
-        n_target = max(N_FLOOR, min(MAX_PHYTO,
-                                    int(round(CAP_SCALE * cap ** CAP_EXP))))
-        self._n_target = n_target
-
-        live = [a for a in self.agents
-                if a.g.kind in DRIFTER_KINDS and not a.doomed]
-        n = len(live)
-
-        if rate > 0.0:
-            p = rate * dt
-            for a in live:
-                if rng.random() < p:
-                    self._leave(a)
-            n -= sum(1 for a in live if a.doomed)
-
-        # arrivals, pulled toward the target. The rate is the flush rate plus
-        # a restoring term, so the population converges even at anchor.
-        want = n_target - n
-        arrive = (rate * n_target + max(0.0, want) * 0.9 + IMMIGRATION) * dt
-        while arrive > 0.0:
-            if rng.random() < min(1.0, arrive):
-                if n < MAX_PHYTO:
-                    a = self._spawn_drifter(kind=self._fit_kind(t))
-                    a.mass = rng.uniform(0.45, 0.95)
-                    n += 1
-            arrive -= 1.0
-        self._n_target_seen = int(n_target)
-        if n > n_target + 2:
-            self._enforce_cap(n_target)
-
-    def _fit_kind(self, t):
-        """Weighted by fitness, but never zero: a type that is losing here
-        still arrives occasionally, because the ocean is not sterile of it and
-        because a model that only imports winners cannot discover anything."""
-        f = self._fitness(t)
-        rng = self.rng
-        w = [0.04 + f.get(k, 0.0) for k in DRIFTER_KINDS]
-        pick = rng.random() * sum(w)
-        for k, wt in zip(DRIFTER_KINDS, w):
-            pick -= wt
-            if pick <= 0.0:
-                return k
-        return DRIFTER_KINDS[-1]
-
-    def _leave(self, a):
-        """Carried out of frame. Not death: no detritus, no ammonium."""
-        if not a.doomed:
-            a.doomed = True
-
-    def _seed_kind(self):
-        """Which type arrives next.
-
-        Weighted toward whatever is currently absent -- "everything is
-        everywhere, the environment selects". Without this the model
-        extinction-locks: a type that loses in one ocean is gone from the
-        pool, so when the ship reaches water that would suit it there is
-        nothing left to succeed. That failure would look exactly like
-        competitive exclusion working correctly, which is what makes it
-        dangerous.
-
-        Weighting rather than forcing: a type that is genuinely unsuited still
-        arrives and still dies, which is the point."""
-        r = self.rng
-        present = {}
-        for a in self.agents:
-            if not a.doomed:
-                present[a.g.kind] = present.get(a.g.kind, 0) + 1
-        w = [1.0 / (1.0 + 2.5 * present.get(k, 0)) for k in DRIFTER_KINDS]
-        pick = r.random() * sum(w)
-        for k, wt in zip(DRIFTER_KINDS, w):
-            pick -= wt
-            if pick <= 0.0:
-                return k
-        return DRIFTER_KINDS[-1]
-
-    def _spawn_drifter(self, parent=None, kind=None):
-        r = self.rng
-        if parent is None:
-            g = Genome(kind if kind is not None else self._seed_kind(), r)
-            z = r.uniform(2, Z_MAX * 0.85)
-            # Across the whole field, not at an edge.
-            #
-            # Arrivals used to appear within five pixels of x=0 or x=W, on the
-            # reasoning that water flows in from one side. That was defensible
-            # when immigration was one cell a day and became badly wrong when
-            # advection made it twenty or thirty: cells entered at the seam,
-            # and with a residual drift of 38 px/day against a residence
-            # half-life of 1.3 days they were carried out again long before
-            # they reached the middle. Measured at day 5, 56% of the
-            # population sat in 17% of the width.
-            #
-            # And the edge model was wrong anyway. The panel is a vertical
-            # SLICE and the ship moves through it, not along it, so new water
-            # fills the whole slice rather than entering from one side.
-            x = r.uniform(0, W)
-            a = Agent(g, x, z, r.uniform(0.5, 0.9), r, 0.02)
-        else:
-            g = parent.g.child(r)
-            z = max(0.5, min(Z_MAX - 0.5, parent.z + r.gauss(0, 4.0)))
-            a = Agent(g, (parent.x + r.gauss(0, 5.0)) % W, z, parent.mass, r,
-                      0.35)          # a daughter is already a real cell
-        self.agents.append(a)
-        return a
-
-    def _seed_het(self):
-        """Which grazer arrives. Same absence-weighting as the drifters: a
-        krill that loses in the tropics has to still be available when the
-        ship reaches the Southern Ocean eighteen months later."""
-        r = self.rng
-        present = {}
-        for a in self.agents:
-            if not a.doomed:
-                present[a.g.kind] = present.get(a.g.kind, 0) + 1
-        w = [1.0 / (1.0 + 2.0 * present.get(k, 0)) for k in HET_KINDS]
-        pick = r.random() * sum(w)
-        for k, wt in zip(HET_KINDS, w):
-            pick -= wt
-            if pick <= 0.0:
-                return k
-        return HET_KINDS[0]
-
-    def _spawn_het(self, kind):
-        r = self.rng
-        a = Agent(Genome(kind, r), r.uniform(0, W), r.uniform(5, Z_MAX * 0.8),
-                  r.uniform(0.8, 1.4), r, 0.02)
-        self.agents.append(a)
-        return a
-
-    def _enforce_cap(self, limit=None):
-        """Cull to MAX_PHYTO, weakest first. Vigour is the running integral of
-        realised growth rate, so it is exactly the right measure: the cells
-        that go are the ones the environment was already failing."""
-        live = [a for a in self.agents
-                if a.g.kind in DRIFTER_KINDS and not a.doomed]
-        excess = len(live) - (MAX_PHYTO if limit is None else limit)
-        if excess <= 0:
-            return
-        live.sort(key=lambda a: (a.vigour, a.mass))
-        for a in live[:excess]:
-            self._die(a)
-
-    def _die(self, a):
-        if a.doomed:
-            return
-        a.doomed = True
-        if len(self.det) < MAX_DETRITUS and a.mass > 0.2:
-            self.det.append(Detritus(a.x, a.z, a.mass * 0.8, self.rng))
-
-    def light_at(self, z, surface, chl=None):
-        if chl is None:
-            chl = self.biomass / MAX_PHYTO
-        return surface * math.exp(-(K_WATER + K_CHL * chl) * z)
-
-    # -- biogeochemistry ---------------------------------------------------
-
-    _deep_n = N_DEEP
-    _iron = 1.0
-    _n_target = 20
-    time_compression = 1.0     # simulated seconds per real second; the
-                               # preview sets it from the speed control
-
-    def _mix_nitrogen(self, dt, mld, mixing):
-        nb = max(1, min(NBINS, int(mld / BIN_M) + 1))
-        f = min(1.0, mixing * 2.4 * dt)
-        for pool in (self.no3, self.nh4):
-            m = sum(pool[:nb]) / nb
-            for i in range(nb):
-                pool[i] += (m - pool[i]) * f
-        kd = min(0.32, 1.2 * dt)
-        for pool in (self.no3, self.nh4):
-            prev = pool[:]
-            for i in range(1, NBINS - 1):
-                pool[i] = prev[i] + kd * (prev[i - 1] - 2 * prev[i] + prev[i + 1])
-        deep = self._deep_n
-        self.no3[NBINS - 1] += (deep - self.no3[NBINS - 1]) * min(1.0, 0.7 * dt)
-        for i in range(NBINS):
-            self.no3[i] = max(0.01, min(deep * 1.3, self.no3[i]))
-            self.nh4[i] = max(0.0, min(deep * 0.6, self.nh4[i]))
-
-    def _nitrify(self, dt, surface, chl):
-        """Chemoautotrophy. These organisms take no light at all -- they run
-        on the chemical energy of oxidising ammonium to nitrate. Nitrification
-        is photoinhibited in the real ocean, which is precisely why this
-        population lives below the euphotic zone."""
-        for i in range(NBINS):
-            I = self.light_at((i + 0.5) * BIN_M, surface, chl)
-            inhib = 1.0 / (1.0 + (I / I_NIT_INHIB) ** 2)
-            nh4 = self.nh4[i]
-            rate = V_NIT * (nh4 / (nh4 + K_NIT)) * inhib * self.nit[i]
-            rate = min(rate, nh4 * 0.6 / max(dt, 1e-9))
-            self.nh4[i] -= rate * dt
-            self.no3[i] += rate * dt
-            self.nit[i] += (rate * Y_NIT - LOSS_NIT * self.nit[i]) * dt
-            self.nit[i] = max(0.004, min(1.2, self.nit[i]))
-
-    def _drift(self, dt):
-        """The water goes past, and EVERYTHING IN IT GOES TOGETHER.
-
-        This lives here, on the per-frame path, rather than in step() where
-        it started. In step() it ran once per simulated hour, so the whole
-        assemblage sat still for an hour and then jumped -- which at
-        DRIFT_SCALE = 1 is a jump of one and a half pixels nobody could see,
-        and at 20,000 is a reshuffle nobody could follow. Either way the
-        slider appeared to do nothing, which is exactly what was reported.
-
-        Advection is a rendering behaviour on the same footing as swimming:
-        it has to happen at frame rate or it does not happen at all."""
-        env = self.env
-        t = self.t + self._acc
-        zpx = (H - TOP_M - BOT_M) / Z_MAX
-        for a in self.agents:
-            a.x = (a.x + env.current(t, a.z) * dt) % W
-        for d in self.det:
-            d.x = (d.x + env.current(t, d.z) * dt) % W
-        for s in self.snow:
-            # snow rides a little slower: it is small, and a body of water
-            # that all moved at exactly one speed would read as a slide
-            s[0] = (s[0] + env.current(t, max(0.0, (s[1] - TOP_M) / zpx))
-                    * dt * 0.7) % W
-
-    def _swim(self, dt):
-        """Move the motile ones at their own speed, and turn them to face it.
-
-        Ballistic below the heading decorrelation time and diffusive above it,
-        which is not fussiness -- it is the only way one piece of code can be
-        right at both ends of a speed control that spans six orders of
-        magnitude. At real time you watch a copepod swim; at a day a second
-        the same call has to become a random walk with the correct
-        diffusivity, D = v^2 * tau, or the displacement per step diverges."""
-        rng = self.rng
-        dt_s = dt * 86400.0 / max(1.0, self.time_compression)
-        # the animation clock, advanced here because _swim is the one thing
-        # that runs on every frame whatever else does
-        self.real_t += dt_s
-        zpx = (H - TOP_M - BOT_M) / Z_MAX
-        slow = max(1e-3, self.swim_scale)     # the slow-motion factor
-        body_k = 1.0 - math.exp(-dt_s / BODY_TAU)
-        for a in self.agents:
-            k = a.g.kind
-            bl = SWIM_BL.get(k)
-            if bl is None:
-                # not a swimmer: tumbling in shear, and nothing else. Not
-                # slowed -- the shear is the water's, and see the note on
-                # SWIM_SCALE above.
-                a.ang += rng.gauss(0.0, 1.0) * math.sqrt(
-                    min(dt_s, 4.0 * TUMBLE_S)) * (2.0 * math.pi / TUMBLE_S) * 0.35
-                continue
-            v0 = bl * 2.0 * visual_radius(a) * slow       # px per second
-            tau = TURN_TAU.get(k, 10.0) / slow * self.turn_scale
-            if dt_s >= tau:
-                # Far past the decorrelation time: one step is a whole random
-                # walk, no gait is visible, and only the diffusivity has to be
-                # right. D = v^2 * tau, and note that the two scalings cancel
-                # here -- v0^2 * tau goes as slow^2 / slow, so a day a second
-                # still mixes at very nearly the rate it always did.
-                step = v0 * math.sqrt(tau * dt_s)
-                a.head = rng.uniform(0.0, 2.0 * math.pi)
-                # keep the body with the heading here, or the first frame
-                # after the speed control comes back down from 1 DAY/SEC is a
-                # whole population snapping through a large angle at once --
-                # measured at 138 degrees in one frame before this line
-                a.body = a.head
-                a.ang = a.head + math.pi
-                a.x += rng.gauss(0.0, step) * 0.7071
-                a.z += rng.gauss(0.0, step) * 0.7071 * 0.25 / zpx
-                continue
-
-            # --- the intended course wanders, slowly ---------------------
-            a.head += rng.gauss(0.0, math.sqrt(dt_s / tau))
-            a.phase += dt_s * slow                        # gait clock, animal time
-            gait = GAIT.get(k, CRUISE)
-
-            # --- the gait modulates course, speed, or both ----------------
-            if gait == HELIX:
-                # A helix seen edge-on is a sinusoid, and the panel is a flat
-                # section through the water, so this IS the projection rather
-                # than an impression of one. Path speed is unchanged; what
-                # drops is headway, by about a tenth, which is the real cost
-                # of corkscrewing and not a fudge.
-                course = a.head + HELIX_YAW[k] * math.sin(
-                    2.0 * math.pi * HELIX_HZ[k] * a.phase)
-                v = v0
-            elif gait == HOP:
-                # Impulse against drag, fired as a Poisson process: velocity
-                # decays with COAST_S and each burst adds to it. Mean speed
-                # works out at impulse * rate * coast, so setting the impulse
-                # from that identity keeps the average exactly v0 however the
-                # burst statistics are tuned. Real hops are not metronomic,
-                # which is why this is Poisson and not a sawtooth.
-                rate = HOP_HZ[k] * slow                   # bursts per panel second
-                coast = COAST_S[k] / slow
-                a.vel *= math.exp(-dt_s / coast)
-                if rng.random() < 1.0 - math.exp(-rate * dt_s):
-                    a.vel += v0 / (rate * coast)
-                course = a.head
-                v = a.vel
-            else:                                          # CRUISE
-                course = a.head
-                v = v0
-
-            # --- the body swings round to the course at a finite rate -----
-            # and the drawing follows the body, not the intention. This is
-            # the whole of the anti-jitter fix: white noise in `head` never
-            # reaches the screen, because a first-order lag cannot pass it.
-            a.body += _wrap_pi(course - a.body) * body_k
-            a.x += v * dt_s * math.cos(a.body)
-            # vertical swimming is damped: the diel migration and the sinking
-            # terms own the depth axis, and a copepod that could cross fifty
-            # metres in a minute would make nonsense of both
-            a.z += v * dt_s * math.sin(a.body) * 0.25 / zpx
-            a.ang = a.body + math.pi          # the drawings face -u
-            # WRAP AND CLAMP HERE, every frame.
-            #
-            # These two lines also live at the end of step(), which is where
-            # they used to be enough -- back when step() ran every frame.
-            # Once the ecology went hourly they stopped running for an hour
-            # at a time, so between ticks a swimmer would cross the right
-            # edge and keep going, or swim below the panel, and simply not be
-            # drawn until the next tick tidied it up. Reported as "two
-            # Calanus become none and stay that way for some time", which is
-            # exactly what it was.
-            a.x %= W
-            a.z = max(0.4, min(Z_MAX - 0.4, a.z))
-
-    def _step_pico(self, dt, surface, chl, t):
-        """Picoplankton, as a scalar field. Monod on the same nitrogen the
-        agents compete for, so this is a real competitor and not a backdrop --
-        in a gyre it wins that competition, draws the surface down to nothing,
-        and that is precisely why the large cells cannot get started."""
-        env = self.env
-        for i in range(NBINS):
-            z = (i + 0.5) * BIN_M
-            I = self.light_at(z, surface, chl)
-            n = self.nh4[i] + self.no3[i]
-            x = (env.temperature(t, z) - T_OPT_PICO) / T_W_PICO
-            f_t = (Q10_EPPLEY ** (T_OPT_PICO - T_REF)) * math.exp(-x * x)
-            mu = (MU_PICO * (I / (I + I_K_PICO)) * (n / (n + K_PICO))
-                  * f_t * min(1.0, self._iron / (self._iron + 0.04))
-                  - LOSS_PICO)
-            grow = self.pico[i] * mu * dt
-            self.pico[i] = max(0.02, min(PICO_MAX, self.pico[i] + grow))
-            if grow > 0.0:
-                want = grow * 0.16
-                take = min(self.nh4[i], want)
-                self.nh4[i] -= take
-                self.no3[i] = max(0.01, self.no3[i] - (want - take))
-            else:
-                self.nh4[i] += -grow * 0.5      # lysis returns ammonium
-
-    def _step_detritus(self, dt):
-        keep = []
-        for d in self.det:
-            d.z += W_DET * dt
-            loss = d.mass * REMIN * dt
-            d.mass -= loss
-            self.nh4[self._bin(d.z)] += loss * 0.85
-            if d.z >= Z_MAX:
-                self.nh4[NBINS - 1] += d.mass * 0.5
-            elif d.mass > 0.08:
-                keep.append(d)
-        self.det = keep
-
-    def _ingest(self, a, dt):
-        """Heterotrophy, by size rather than by species.
-
-        Was a small_only boolean, which is a rule about who eats whom written
-        by hand. This is a log-normal preference kernel centred on a
-        predator:prey length ratio of ten -- so a copepod at 1500 um takes
-        150 um prey and a tintinnid at 60 um takes 6 um prey, and neither of
-        them was told anything about the other. Add a new organism to the
-        roster and its position in the food web is already decided by how big
-        it is."""
-        rng = self.rng
-        got = 0.0
-        reach = 30.0 if a.g.kind == COPEPOD else 18.0
-        zreach = reach * 0.30
-        for dd in self.det:
-            if abs(dd.z - a.z) < zreach and abs(dd.x - a.x) < reach:
-                if rng.random() < 1.2 * dt:
-                    take = min(dd.mass, 0.45)
-                    dd.mass -= take
-                    got += take * 0.55
-                    break
-        # the unresolved small-cell class. A copepod is far too big to filter
-        # picoplankton directly; everything smaller lives on it, and in a gyre
-        # it is the only food there is.
-        if a.g.kind != COPEPOD:
-            i = self._bin(a.z)
-            take = min(self.pico[i] - 0.02,
-                       PICO_GRAZE * self.pico[i] * dt)
-            if take > 0.0:
-                self.pico[i] -= take
-                got += take * 0.85
-        rate = (2.0 if a.g.kind == COPEPOD else 0.85) * self._graze_f
-        for p in self.agents:
-            if p is a or p.doomed or p.g.kind not in DRIFTER_KINDS:
-                continue
-            if abs(p.z - a.z) < zreach and abs(p.x - a.x) < reach:
-                if rng.random() < rate * graze_pref(a.g.kind, p.g.kind) * dt:
-                    self._die(p)
-                    got += p.mass * 0.45
-                    self.nh4[self._bin(p.z)] += p.mass * 0.22   # sloppy feeding
-                    break
-        return got
-
-    # -- main step ---------------------------------------------------------
-
-    # THE ECOLOGY RUNS ON ITS OWN CLOCK, NOT THE FRAME'S.
-    #
-    # At the piece's real setting -- one second per second, the whole voyage
-    # in the whole three years -- a frame at 20 fps is 5.8e-7 of a day. That
-    # number breaks two things.
-    #
-    # The first is arithmetic, and it is fatal rather than untidy. In a
-    # 32-bit float the spacing between representable values grows with the
-    # value, and `t += dt` loses any increment smaller than half a spacing.
-    # Measured: a float32 clock stepped 5.787e-7 at a time stops advancing
-    # **on day 16** -- silently, with every organism still swimming and every
-    # screen still cycling, while the voyage never leaves the Atlantic. By
-    # day 1018 the spacing is 6.1e-5, a hundred times the step.
-    #
-    # Stepping the ecology at ECO_DT makes the smallest increment 0.042 days,
-    # which is seven hundred times the spacing at the end of the voyage and
-    # entirely safe in single precision. This is not a tidiness argument.
-    #
-    # The second is that the model was calibrated at dt = 1/24 day and the
-    # sweeps ran at 1/6. Handing it steps a million times smaller is not more
-    # accurate, it is the same answer computed a million times over -- and it
-    # costs 1.7 ms of the frame budget to get it.
-    #
-    # So: swimming every frame, because that is a real-time behaviour and the
-    # eye is watching it. Ecology once an hour of simulated time, which at
-    # 1:1 is once an hour of real time, and which nobody can see happening.
-    ECO_DT = 1.0 / 24.0
+    # -- what the water is -------------------------------------------------
 
     @property
     def now(self):
-        """Simulated days, including the fraction not yet handed to the
-        ecology. Use this for anything displayed; use `t` inside the model."""
-        return self.t + self._acc
+        return self.t
 
-    # Seconds between arrivals when the panel has lost somebody. The ecology
-    # runs hourly and that is right for the ecology; it is much too slow for
-    # a gap in the picture. At one second per second a grazer eaten at ten
-    # past would leave a hole until eleven.
-    #
-    # This is not a cheat bolted on to keep the picture full. The advection
-    # model (see the note above IMMIGRATION) already says the panel is
-    # showing new water every day or two and that the community is carried in
-    # from ahead rather than descended from what was there yesterday -- so
-    # arrivals are the dominant term, and running them on a clock a person
-    # can watch is more faithful than running them on the ecology's.
-    RESTOCK_S = 5.0
+    def sun_elev(self):
+        """Solar elevation in degrees at the ship, right now. The diel
+        migration is driven off this rather than off a clock hour, so it
+        happens at the right moment at every latitude and on every date --
+        which matters on a track that reaches 56 S in the southern winter."""
+        doy = (self.t % 365.25) + 1
+        hour = (self.t % 1.0) * 24.0
+        la, lo = self.env.where(self.t)
+        return math.degrees(solar_elevation(doy, hour, la, lo))
 
-    def _restock(self):
-        """Fill a hole in the drawn population, one individual at a time.
+    def _sample(self):
+        """Ask the ocean where we are what lives here."""
+        env = self.env
+        t = self.t
+        la, lo = env.where(t)
+        self.prod = env.productivity(t)
+        self.bottom = env.bottom_m(t)
+        self.sun = self.sun_elev()
+        # temperature as a FUNCTION of depth, not a number -- see the note on
+        # assemblage() in fish.py. This closure is the whole of the fix.
+        self.season = env.season(t)
+        temp_at = lambda z: env.temperature(t, z)
+        shore = env.shelf_km(t)
+        self.assemblage = F.assemblage(
+            temp_at, self.bottom, self.prod, shore, la, lo)
+        if not self.assemblage:
+            # THE PANEL IS NEVER BARE. Four trapezoids multiplied make a lot
+            # of exact zeros, and water that is slightly wrong for everything
+            # returns nothing at all -- which happened, at Plymouth, on the
+            # day the voyage starts.
+            #
+            # The floor is dropped rather than a species being invented: take
+            # whatever scores highest however badly, and if literally nothing
+            # scores, take the mesopelagic, which is present over any water
+            # deep enough to hold it. There is no sea on this planet with no
+            # fish in it, so there is no state of this model that should show
+            # one.
+            self.assemblage = F.assemblage(
+                temp_at, self.bottom, self.prod, shore, la, lo, floor=0.0)[:4]
+        if not self.assemblage and self.bottom > 400.0:
+            self.assemblage = [(k, 0.05) for k in F.MESOPELAGIC]
+        if not self.assemblage:
+            # Shallow water that suits nothing in the roster at all -- a cold
+            # enclosed bay, mostly. Four trapezoids multiplied can be exactly
+            # zero for every species, and then even the floor above has
+            # nothing to stand on: the count came out at zero fish, which is
+            # the one number this panel must never show.
+            #
+            # Fall back to whoever is closest on TEMPERATURE, which is the
+            # axis that actually excludes things here, and let the rest go.
+            # It is a guess, and it is a guess about the right axis.
+            t_here = env.temperature(t, 20.0)
+            near = sorted(F.ROSTER,
+                          key=lambda f: min(abs(t_here - f.temp[1]),
+                                            abs(t_here - f.temp[2])))
+            self.assemblage = [(f.key, 0.04) for f in near[:3]
+                               if F.reachable(f.key, la, lo)][:3]
+            if not self.assemblage:
+                self.assemblage = [(near[0].key, 0.04)]
+        self._shares()
 
-        Composition is not chosen here: `_fit_kind` picks by fitness in the
-        current water, exactly as the hourly arrivals do, so the ratios stay
-        the model's. What this changes is only how long a gap is allowed to
-        sit there."""
-        n = sum(1 for a in self.agents if a.g.kind in DRIFTER_KINDS)
-        nz = sum(1 for a in self.agents if a.g.kind in HET_KINDS)
-        if n < self._n_target_seen and n < MAX_PHYTO:
-            a = self._spawn_drifter(kind=self._fit_kind(self.t))
-            a.mass = self.rng.uniform(0.45, 0.95)
-        elif nz < self._nz_target_seen and nz < MAX_ZOO:
-            self._spawn_het(self._seed_het())
+    def abundance(self, key, suit):
+        """Standing biomass of one species in this water, on the absolute
+        scale the whole voyage shares.
+
+        Four terms and every one of them is a mechanism:
+
+            suitability   the envelope. Whether the water suits it at all.
+            band          epipelagic biomass tracks productivity over three
+                          orders of magnitude; mesopelagic biomass is
+                          near-uniform ocean-wide. This is the one term that
+                          knows which half of the panel a species lives in,
+                          and it is why a gyre reads as a full deep layer
+                          under an empty sunlit one without anything
+                          allocating the two halves separately.
+            trophic       decades of biomass lost per trophic level.
+            turnover      ...offset by the fact that slow-growing predators
+                          accumulate, so a biomass pyramid is shallower than
+                          a production pyramid.
+
+        Used for BOTH the plate's bar and the number of fish drawn, which is
+        the point: there is one statement about how much of something is
+        here, and the renderer and the census are two views onto it rather
+        than two independent guesses."""
+        f = F.BY_KEY[key]
+        band = MESO_BIOMASS if key in F.MESOPELAGIC else max(0.02, self.prod)
+        return (suit * band
+                * (10.0 ** (-TROPHIC_DECADE * (f.trophic - TROPHIC_REF)))
+                * (f.len_common / 20.0) ** TURNOVER_EXP
+                * A_SCALE)
+
+    def _shares(self):
+        """How many of each species to draw.
+
+        INTERPOLATED FROM THE ECOLOGY BETWEEN TWO MEASURED ANCHORS, which
+        replaced four hand-set exponents and a two-band slot allocation with
+        one line and two numbers that were measured rather than chosen.
+
+        The old scheme normalised suitability into a share of a panel budget,
+        and that budget was itself a compressed function of capacity. It
+        worked, but it meant the number of fish on the panel was three
+        judgements deep and none of them could be checked against anything.
+
+        This asks a question with an answer instead: run the whole voyage,
+        find the scarcest a species ever gets while still being present and
+        the richest it ever gets, and map those two to one fish and to
+        AB_N_MAX fish. Everything between is log-interpolated -- log because
+        the span is 3.7 decades and a linear map would draw one fish for
+        everything that is not the Humboldt.
+
+        What this buys, beyond having two fewer invented constants: the count
+        on the panel and the bar on the key plate are now the SAME quantity,
+        so a species whose bar is one decade longer than another's is drawn
+        correspondingly more often. They cannot disagree, because there is
+        only one number."""
+        self.ab = {k: self.abundance(k, s) for k, s in self.assemblage}
+        want = {}
+        for k, ab in self.ab.items():
+            if ab <= 0.0:
+                continue
+            # BIOMASS PER INDIVIDUAL DRAWN, which is the quantity a count
+            # should come from, and it is not biomass itself.
+            #
+            # Straight biomass put eighteen whale sharks in the Humboldt.
+            # Not because the metric was wrong about whale sharks -- a filter
+            # feeder at trophic 3.6 that weighs ten tonnes really does carry
+            # a lot of biomass per individual -- but because a count is a
+            # number of ANIMALS and biomass is not.
+            #
+            # The panel is a fixed area, and what the eye reads as "how full
+            # of fish" is ink, not tonnage. Ink goes as the drawn area of an
+            # individual, and drawn length goes as L^SIZE_EXP, so area goes
+            # as L^(2*SIZE_EXP) = L^0.8. Dividing by that makes the ink on
+            # the panel proportional to the biomass in the water, which is
+            # the honest thing for a picture of the sea to be proportional
+            # to. One whale shark then says what eighteen were failing to.
+            ink = (F.BY_KEY[k].len_common / 20.0) ** (2.0 * F.SIZE_EXP)
+            f = (ab / ink - AB_LO) / (AB_HI - AB_LO)
+            want[k] = max(1, int(round(1.0 + (AB_N_MAX - 1)
+                                       * max(0.0, min(1.0, f)))))
+
+        # THE PANEL HAS A BUDGET AND THE OCEAN DOES NOT. Scaled down
+        # proportionally rather than truncated, so an over-full Humboldt
+        # keeps its proportions and merely gets smaller -- truncation would
+        # drop the rarest species entirely, which is precisely the
+        # information the plate exists to carry.
+        total = sum(want.values())
+        if total > MAX_AGENTS:
+            k_scale = float(MAX_AGENTS) / total
+            want = {k: max(1, int(round(v * k_scale))) for k, v in want.items()}
+            # rounding up to a floor of one can push it back over; shave the
+            # largest until it fits
+            while sum(want.values()) > MAX_AGENTS and len(want) < MAX_AGENTS:
+                big = max(want, key=lambda k: want[k])
+                if want[big] <= 1:
+                    break
+                want[big] -= 1
+        elif 0 < total < N_FLOOR:
+            # THE PANEL IS NEVER BARE, and this floor went missing when the
+            # count stopped being a share of a budget: the budget carried the
+            # floor, and the interpolation that replaced it has no opinion
+            # about totals at all. Seven panels in a 102-sample sweep came
+            # back with fewer than six fish, and one came back with one.
+            #
+            # Topped up by handing extra individuals to the most abundant
+            # species present, which is the one the water actually holds most
+            # of -- rather than by inventing a species, which would be a
+            # different and much worse kind of floor.
+            order = sorted(want, key=lambda k: -self.ab[k])
+            i = 0
+            while sum(want.values()) < N_FLOOR:
+                want[order[i % len(order)]] += 1
+                i += 1
+        self.want = want
+        self.n_want = sum(want.values())
+        self.n_band = (sum(v for k, v in want.items()
+                           if k not in F.MESOPELAGIC),
+                       sum(v for k, v in want.items() if k in F.MESOPELAGIC))
+
+    # -- the population ----------------------------------------------------
+
+    Z_MIN = 6.0                # NOTHING IS DRAWN AT ZERO METRES. A fish
+                               # centred on the surface row is half off the
+                               # top of the panel, and several species have
+                               # depth ranges that legitimately start at 0.
+                               # Six metres is one fish-length down on the
+                               # log axis, which is enough to clear the swell
+                               # line and still read as 'at the surface'.
+
+    def z_floor(self):
+        """The deepest a fish may be drawn: the seabed, or the bottom of the
+        panel, whichever is shallower.
+
+        WITHOUT THIS, FISH SWIM THROUGH ROCK. Every species carries a depth
+        range from FishBase, and those ranges are what the animal does
+        SOMEWHERE -- a cod's 0-600 m is the range of the species, not a
+        promise that there are 600 m underneath it. In 55 m of Plymouth Sound
+        the whole roster was distributed down its own ranges and half of it
+        was drawn below a seabed that was visibly right there on the panel."""
+        return max(12.0, min(Z_MAX - 1.0, self.bottom * 0.97))
+
+    def depth_of(self, f, r, floor=None):
+        """Where one individual sits, given that the sea has a bottom.
+
+        A species asked for water deeper than there is does NOT get stacked
+        on the seabed. That was the first version and in 71 m of Port St
+        Julian it put every deep-living species at exactly the floor, inside
+        the hatching, so the panel read as empty water over a shaded band
+        with nothing in it -- while the census cheerfully reported nine
+        species.
+
+        Instead the band is rescaled into the lower half of the water that
+        actually exists, spread by the individual's rank. A grenadier over a
+        shallow shelf is near the bottom of it, which is true, and it is
+        visibly near the bottom rather than buried in it."""
+        if floor is None:
+            floor = self.z_floor()
+        z = F.swim_depth(f, self.sun, r)
+        if z > floor:
+            z = floor * (0.55 + 0.40 * r)
+        return max(self.Z_MIN, min(floor, z))
+
+    def _spawn(self, key, instant=False):
+        f = F.BY_KEY[key]
+        r = self.rng.random()
+        a = Agent(key, self.rng.uniform(0, W), self.depth_of(f, r), r, self.rng)
+        if instant:
+            a.vis = 1.0
+        self.agents.append(a)
+        return a
+
+    def _restock(self, instant=False):
+        """Bring the population to what the water wants, in one go. Used at
+        construction and after a voyage change; the gradual version is
+        _relax()."""
+        self.agents = []
+        self.have = {}
+        for key, n in self._wanted().items():
+            for _ in range(n):
+                self._spawn(key, instant=instant)
+            self.have[key] = float(n)
+
+    def _wanted(self):
+        """key -> integer count the water wants right now.
+
+        Computed in _shares() straight from the abundance, so this is now
+        only an accessor. It used to do largest-remainder allocation of a
+        panel budget across normalised shares, which is what you have to do
+        when the count is a share of a total rather than a quantity in its
+        own right."""
+        return self.want
+
+    def _relax(self, dt):
+        """Move the population toward what the water wants, at TURNOVER_D."""
+        want = self._wanted()
+        k_relax = 1.0 - math.exp(-dt / TURNOVER_D)
+        # smoothed counts, so a species does not flicker in and out when its
+        # share sits near a rounding boundary
+        for key in set(list(want) + list(self.have)):
+            cur = self.have.get(key, 0.0)
+            self.have[key] = cur + (want.get(key, 0) - cur) * k_relax
+
+        alive = {}
+        for a in self.agents:
+            if not a.dying:
+                alive[a.key] = alive.get(a.key, 0) + 1
+        for key, target in self.have.items():
+            n = int(round(target))
+            cur = alive.get(key, 0)
+            for _ in range(max(0, n - cur)):
+                self._spawn(key)
+            if cur > n:
+                # retire the ones nearest the panel edge: a fish fading out
+                # where it is already half off screen is the least visible
+                # way to lose one
+                cand = [a for a in self.agents
+                        if a.key == key and not a.dying]
+                cand.sort(key=lambda a: -abs(a.x - W * 0.5))
+                for a in cand[:cur - n]:
+                    a.dying = True
+        for key in list(self.have):
+            if self.have[key] < 0.02 and key not in want:
+                del self.have[key]
+
+    def _fade(self, dt):
+        out = []
+        for a in self.agents:
+            if a.dying:
+                a.vis -= dt / DIE_D
+                if a.vis <= 0.0:
+                    continue
+            elif a.vis < 1.0:
+                a.vis = min(1.0, a.vis + dt / EMERGE_D)
+            out.append(a)
+        self.agents = out
+
+    # -- swimming ----------------------------------------------------------
+
+    def _swim(self, dt):
+        """Move the fish, at real time, and turn them to face where they go.
+
+        Ballistic below the heading decorrelation time and diffusive above it,
+        which is the one way a single piece of code can be right at both ends
+        of a speed control spanning six orders of magnitude."""
+        rng = self.rng
+        dt_s = dt * 86400.0 / max(1.0, self.time_compression)
+        self.real_t += dt_s
+        slow = max(1e-3, self.swim_scale)
+        body_k = 1.0 - math.exp(-dt_s / BODY_TAU)
+
+        # the shoals' collective headings wander slowly, and every member
+        # steers toward its own species' heading in proportion to how
+        # gregarious that species is. One number per species per frame buys
+        # the single most recognisable behaviour in the sea.
+        floor = self.z_floor()
+        sk = math.sqrt(min(dt_s, 4.0 * SHOAL_TAU) / SHOAL_TAU)
+        for key in self.want:
+            h = self.shoal_head.get(key)
+            if h is None:
+                h = rng.uniform(0.0, 2.0 * math.pi)
+            self.shoal_head[key] = h + rng.gauss(0.0, sk)
+
+        for a in self.agents:
+            f = F.BY_KEY[a.key]
+            L = F.draw_length(f, a.jit)
+            v0 = f.swim_bl * L * slow                       # px per second
+            tau = F.TURN_TAU[f.gait] / slow * self.turn_scale
+
+            # --- depth: the band owns it -----------------------------------
+            #
+            # Relaxed toward the species' band rather than set to it, so a
+            # migrating layer ASCENDS instead of teleporting. The time
+            # constant is in panel seconds because it is a drawing rate: the
+            # real ascent takes about an hour, and at one second per second
+            # so does this one.
+            z_want = self.depth_of(f, a.r, floor)
+            a.z += (z_want - a.z) * (1.0 - math.exp(-dt_s / 900.0))
+
+            if dt_s >= tau:
+                # far past decorrelation: one step is a whole random walk and
+                # only the diffusivity has to be right, D = v^2 tau
+                step = v0 * math.sqrt(tau * dt_s)
+                a.head = rng.uniform(0.0, 2.0 * math.pi)
+                a.body = a.head
+                a.x = (a.x + rng.gauss(0.0, step)) % W
+                a.phase += dt_s * slow
+                continue
+
+            a.head += rng.gauss(0.0, math.sqrt(dt_s / tau))
+            if f.shoal > 0.05:
+                a.head += _wrap_pi(self.shoal_head[a.key] - a.head) * \
+                    min(1.0, f.shoal * F.SHOAL_K * dt_s)
+            a.phase += 2.0 * math.pi * F.beat_hz(f) * dt_s * slow
+
+            a.body += _wrap_pi(a.head - a.body) * body_k
+            a.x = (a.x + v0 * dt_s * math.cos(a.body)) % W
+            # VERTICAL SWIMMING, CONVERTED THROUGH THE LOG AXIS.
+            #
+            # The first version multiplied a displacement in pixels by
+            # Z_MAX/H, which is 2.5 m per pixel -- the conversion for a
+            # LINEAR depth axis. This one is logarithmic, so a pixel is
+            # about 0.6 m at the surface and 5 m at 500 metres, and a flat
+            # 2.5 was four times too coarse in the top of the column.
+            #
+            # What it looked like: at Port St Julian, in 71 m of water, an
+            # entire 45-fish anchovy shoal sank onto the seabed within a
+            # second and stayed there, drawn inside the hatching. The census
+            # said nine species and the panel showed bare water.
+            #
+            # The step is also capped. Below the heading decorrelation time
+            # this branch is ballistic, and a large dt -- which is what the
+            # speed control produces at 1 DAY/SEC, and what a headless sweep
+            # produces every step -- would otherwise move a fish the whole
+            # depth of the ocean between one sample and the next.
+            m_per_px = (Z0 + a.z) * _LOGSPAN / float(H - TOP_M - BOT_M)
+            dz = v0 * dt_s * math.sin(a.body) * VERT_DAMP * m_per_px
+            dz = max(-VERT_MAX, min(VERT_MAX, dz))
+            a.z = max(self.Z_MIN, min(floor, a.z + dz))
+
+    # -- the clock ---------------------------------------------------------
+
+    def _ecology(self, dt):
+        """Resample the water and move the population toward it. Does NOT
+        touch the clock -- both entry points below own that, and having two
+        callers each advance `t` in their own way is exactly how the first
+        version of this deadlocked."""
+        self.env.step(dt)
+        self._sample()
+        self._relax(dt)
+        self._fade(dt)
+
+    def step(self, dt):
+        """Headless entry: advance the clock and run the ecology together.
+
+        tools/ and the --stills and --voyage paths drive this in a
+        `while eco.t < N` loop, so it MUST advance t. It does not swim: a
+        contact sheet does not care where in its stroke a fish is."""
+        self.t += dt
+        self._ecology(dt)
 
     def advance(self, dt_days):
-        """One frame. Use this rather than step() from anything with a frame
-        rate; step() is the physics and this is the schedule."""
-        self._acc += dt_days
-        if self._acc >= self.ECO_DT:
-            # substep when the speed control is wound up, so a day a second
-            # is still integrated at the resolution the model was built for
-            n = max(1, min(64, int(self._acc / self.ECO_DT)))
-            chunk = self._acc / n
-            for _ in range(n):
-                self.step(chunk, swim=False)
-            self._acc = 0.0
-        self._swim(dt_days)
-        self._drift(dt_days)
-        if self.real_t >= self._restock_at:
-            self._restock_at = self.real_t + self.RESTOCK_S
-            self._restock()
+        """Frame-rate entry: swim every frame, run the ecology hourly.
 
-    def step(self, dt, swim=True):
-        if dt <= 0:
+        Resampling a 2-degree climatology sixty times a second answers the
+        same question sixty times, so the ecology is accumulated and run on
+        the hour. The clock itself advances smoothly, because the footer
+        prints a position and a date and those should not tick."""
+        if dt_days <= 0.0:
+            self._swim(0.0)
             return
-        rng = self.rng
-        env = self.env
-        env.step(dt)
-        self.t += dt
-        t = self.t
+        self._swim(dt_days)
+        self.t += dt_days
+        self._eco_due += dt_days
+        if self._eco_due >= ECO_DT:
+            self._ecology(self._eco_due)
+            self._eco_due = 0.0
 
-        surface = env.surface_light(t)
-        self._deep_n = env.deep_nitrate(t)
-        self._iron = env.iron(t)
-        mld = env.mixed_layer_depth(t)
-        mixing = env.mixing(t)
-        chl = self.biomass / MAX_PHYTO
-        daylight = min(1.0, surface / 0.20)
+    # -- what the plate asks ----------------------------------------------
 
-        self._mix_nitrogen(dt, mld, mixing)
-        self._step_pico(dt, surface, chl, t)
-        self._nitrify(dt, surface, chl)
-        self._step_detritus(dt)
-        # Export flux: the unresolved fine fraction of dead matter also
-        # sinks and remineralises. Without this the deep water has no
-        # ammonium and the chemoautotrophs have nothing to oxidise.
-        export = self.biomass * 0.022 * dt
-        lo = NBINS // 2
-        for i in range(lo, NBINS):
-            self.nh4[i] += export / (NBINS - lo)
+    def census(self):
+        """[(key, count, suitability, biomass), ...], richest first.
 
-        drifters = [a for a in self.agents
-                    if a.g.kind in DRIFTER_KINDS and not a.doomed]
-        # Holling type III grazing. Without this the model has no prey refuge
-        # at all: encounter rate falls only as fast as the prey thin out, so
-        # a grazer population built up during a bloom will follow the prey
-        # all the way to literally zero -- which it did, on day 120, off the
-        # Rio de la Plata, with nutrients abundant and light plentiful. A
-        # sigmoid response is what real grazers show and what NPZ models have
-        # used since Fasham: below about ten prey the grazers effectively
-        # stop finding them, and the population always keeps a seed.
-        nd = len(drifters)
-        self._graze_f = (nd * nd) / (nd * nd + K_PREY * K_PREY)
-        hets = [a for a in self.agents
-                if a.g.kind in HET_KINDS and not a.doomed]
-        n_drift = len(drifters)
-        born = []
+        The count is what is DRAWN and the biomass is what the model
+        BELIEVES. They are deliberately different numbers: the drawn count is
+        compressed so a gyre is watchable, and the plate's bar reports the
+        uncompressed quantity.
 
-        # ---- swimming ------------------------------------------------------
-        if swim:
-            self._swim(dt)
+        BIOMASS, NOT NUMBERS, and that correction came from the checker
+        rather than from looking at the panel. Reported as numerical density
+        the uncompressed quantity carries a 1/L^3 term, so a 3 cm
+        bristlemouth outweighs a 14 cm anchoveta a hundred to one and the
+        plate said every water on Earth was sixty per cent hatchetfish --
+        the Humboldt, the Moluccas and the North Sea alike. Which is not even
+        wrong: bristlemouths really are the most abundant vertebrates there
+        are, and a census that says so about every ocean has told you nothing
+        about any of them.
 
-        # ---- advection and fade, common to everything --------------------
-        if swim:
-            self._drift(dt)          # standalone step(): carry the water too
+        Biomass is the currency marine ecology actually uses, it is what "the
+        largest fishery on Earth" is a statement about, and it drops the
+        cell-size term entirely. What is left is suitability, the trophic
+        pyramid, and which band the species is in -- so the Humboldt reads
+        anchoveta and the gyre reads mesopelagic, which is the truth about
+        both."""
+        tally = {}
         for a in self.agents:
-            turb = mixing * (1.0 if a.z < mld else 0.35)
-            a.x += rng.gauss(0, 26.0 * turb) * dt
-            a.z += rng.gauss(0, 30.0 * turb) * dt
-            a.age += dt
-            a.flash = max(0.0, a.flash - dt * 6.0)
-            if a.doomed:
-                a.vis -= dt / DIE_D
-            else:
-                a.vis = min(1.0, a.vis + dt / EMERGE_D)
-
-        # ---- phototrophs and mixotrophs ----------------------------------
-        for a in drifters:
-            i = self._bin(a.z)
-            I = self.light_at(a.z, surface, chl)
-            f_light = I / (I + I_K)
-            nh4 = self.nh4[i]
-            no3 = self.no3[i]
-            # ammonium is cheaper, so it is taken preferentially and it
-            # suppresses nitrate uptake
-            d = DERIVED[a.g.kind]
-            ks = K_S * d[1]          # a big cell needs more, per the allometry
-            f_nh4 = nh4 / (nh4 + ks)
-            f_no3 = (no3 / (no3 + ks)) * math.exp(-PSI * nh4)
-            # Liebig: whichever of nitrogen and iron is scarcer sets the
-            # ceiling. In an HNLC region nitrogen is abundant and this term is
-            # entirely iron, which is the whole point of carrying the field.
-            # Iron half-saturation scales with size the same way nitrogen does
-            # (Sunda & Huntsman 1997), so a big cell is iron-limited first.
-            f_fe = self._iron / (self._iron + 0.12 * d[1])
-            if a.g.kind in DIAZOTROPHS:
-                # fixes its own nitrogen, so the N terms simply do not apply.
-                # What binds instead is iron, at twenty-five times the demand,
-                # and a hard temperature floor.
-                T = env.temperature(t, a.z)
-                f_fe = self._iron / (self._iron + 0.12 * d[1] * DIAZO_FE_COST)
-                f_nut = f_fe if T >= DIAZO_T_MIN else 0.0
-            else:
-                f_nut = min(1.0, f_nh4 + f_no3, f_fe)
-            f_temp = temp_factor(a.g.kind, env.temperature(t, a.z))
-            # a.g.jitter is the lognormal spread on growth rate. It is not
-            # cosmetic: it is what lets a subset of individuals land on an
-            # unusually favourable combination and found a bloom, which is how
-            # real diversity within a type actually behaves.
-            mu_max = MU_MAX * d[0] * a.g.jitter
-
-            ingested = 0.0
-            if a.mode == MIXO:
-                ingested = self._ingest(a, dt)
-                r = mld / Z_MAX
-                mu = (0.62 * mu_max * f_light * f_nut * f_temp
-                      - d[7] - 0.11 * r / (0.55 + r))
-            else:
-                # Sverdrup: a cell mixed below the critical depth spends most
-                # of its time in the dark, so deep mixing is a loss term. It
-                # SATURATES, though -- once the column is fully mixed, mixing
-                # it harder changes nothing, and the linear form here was still
-                # climbing at 1.3x and taking 0.44/day out of a cell whose
-                # maximum growth was 1.0. That is what emptied the Southern
-                # Ocean, in water the satellite says is among the richest on
-                # the track.
-                r = mld / Z_MAX
-                mu = (mu_max * f_light * f_nut * f_temp
-                      - d[7] - 0.30 * r / (0.55 + r))
-
-            grow = a.mass * mu * dt
-            a.mass = min(2.45, a.mass + grow + ingested * 0.6)
-            a.vigour = max(0.0, min(1.0, a.vigour + (mu * 2.2 - 0.10) * dt))
-
-            if grow > 0:
-                want = grow * 0.16
-                share = f_nh4 / max(1e-6, f_nh4 + f_no3)
-                take = min(nh4, want * share)
-                self.nh4[i] = max(0.0, nh4 - take)
-                self.no3[i] = max(0.01, self.no3[i] - (want - take))
-
-            if a.mode == MIXO:
-                # motile: swims up for light by day, down for nutrients at
-                # night. The opposite phase to the copepods.
-                target = 5.0 + 30.0 * (1.0 - daylight)
-                a.z += (target - a.z) * min(1.0, 1.2 * dt)
-            else:
-                # Sinking is allometric and buoyancy is per-type. A starving
-                # cell sinks faster, which is real -- nutrient-stressed diatoms
-                # go from under 1 m/day to over 10 -- and it is also what
-                # exports a dead bloom out of the lit layer.
-                a.z += (0.4 + 3.6 * (1.0 - a.vigour)) * d[2] * dt
-
-            if a.mass > 1.9 and n_drift + len(born) < MAX_PHYTO:
-                a.mass *= 0.5
-                a.age = 0.0
-                a.flash = 1.0
-                born.append(a)
-            if a.z > Z_MAX or a.mass < 0.16 or a.age > 55:
-                self._die(a)
-
-        # ---- heterotrophs -------------------------------------------------
-        for a in hets:
-            k = a.g.kind
-            if k in MIGRATORS:
-                # diel vertical migration, with individual variation so they
-                # do not sweep up and down as one rigid block. Copepods and
-                # krill both do it; ciliates and salps do not.
-                target = 7.0 + 14.0 * a.g.curl + 34.0 * daylight
-                a.z += (target - a.z) * min(1.0, 2.2 * dt)
-            else:
-                target = 9.0 + 24.0 * (0.5 + 0.5 * a.g.curl)
-                a.z += (target - a.z) * min(1.0, 0.5 * dt)
-            # Grazers get the thermal niche the drifters have always had.
-            # Without it a krill with a 4 C optimum fed happily in 28 C water
-            # and the tropical gyres filled with Euphausia, which is a
-            # Southern Ocean animal. The niche was in the trait table the
-            # whole time; only the phototrophs were reading it.
-            tf = temp_factor(k, env.temperature(t, a.z))
-            a.mass += self._ingest(a, dt) * HET_ASSIM[k] * min(1.6, tf)
-            # maintenance is allometric here too: a salp costs little to run
-            a.mass -= DERIVED[k][7] * 3.2 * dt
-            # A grazer that cannot divide because its class is full used to
-            # keep eating and keep growing, with nothing bounding it -- the
-            # drifters had min(2.45, ...) and the heterotrophs had nothing.
-            # Krill reached a mass of 59 and the grazers ended up outweighing
-            # everything they were eating, which is not a food chain, it is a
-            # pyramid standing on its point.
-            a.mass = min(2.6, a.mass)
-            nk = sum(1 for h in hets if h.g.kind == k and not h.doomed)
-            n_all = sum(1 for h in hets if not h.doomed) + len(born)
-            cap_ok = (nk + sum(1 for b in born if b.g.kind == k)
-                      < HET_CAP.get(k, 2)) and n_all < MAX_ZOO
-
-            a.gravid = a.mass > 1.9
-            if a.mass > 2.4 and cap_ok:
-                a.mass = 1.1
-                born.append(a)
-            if a.mass < 0.35 or a.age > 90:
-                self._die(a)
-
-        # ---- births -------------------------------------------------------
-        for parent in born:
-            if parent.g.kind in DRIFTER_KINDS:
-                self._spawn_drifter(parent)
-            else:
-                c = self._spawn_het(parent.g.kind)
-                c.x = (parent.x + rng.gauss(0, 8)) % W
-                c.z = parent.z
-                c.mass = 0.7
-
-        # ---- remove only once fully faded out ------------------------------
-        self.agents = [a for a in self.agents if a.vis > 0.0]
-
-        # ---- immigration, and a cap held by fitness rather than by arrival --
-        #
-        # The reseed used to fire only when the population was below twelve,
-        # which meant that once the panel was full nothing new could ever
-        # arrive. Whoever filled the cap first held it until conditions
-        # crashed them -- so the community was decided by founder effect, and
-        # a type that would have won on the traits simply never got in. The
-        # composition log showed Chaetoceros holding the tropics at 100% for
-        # two hundred days on water that Navicula should have taken.
-        #
-        # So: arrivals are continuous and independent of how full it is, and
-        # the cap is paid for afterwards by whichever individuals are doing
-        # worst. A hard cap is a rendering constraint; making it a rendering
-        # constraint that culls the least fit is the only way to stop it
-        # behaving like an ecological one.
-        self._advect(dt, t)
-        self._enforce_cap()
-        nz = sum(1 for a in self.agents if a.g.kind in HET_KINDS)
-        if nz < MAX_ZOO:
-            if rng.random() < 1.2 * dt:
-                self._spawn_het(self._seed_het())
-                nz += 1
-        # the level the restocker restores to between ticks: what the ecology
-        # last decided the water was carrying, not a number of its own
-        self._nz_target_seen = nz
-
-        # ---- marine snow: sinking only; the sideways part is in _drift ----
-        zpx = (H - TOP_M - BOT_M) / Z_MAX
-        for s in self.snow:
-            s[1] += (16.0 + 30.0 * s[2]) * dt
-            if s[1] > H:
-                s[1] = -2.0
-                s[0] = rng.uniform(0, W)
-
-        # ---- separation: a layout force, not physics -----------------------
-        rate = min(1.0, dt * 26.0)
-        ags = self.agents
-        n = len(ags)
-        rad = [EXTENT[a.g.kind] * visual_radius(a) for a in ags]
-        for i in range(n):
-            a = ags[i]
-            ra = rad[i]
-            for j in range(i + 1, n):
-                b = ags[j]
-                dx = b.x - a.x
-                if dx > W * 0.5:
-                    dx -= W
-                elif dx < -W * 0.5:
-                    dx += W
-                dz = (b.z - a.z) * zpx
-                d2 = dx * dx + dz * dz
-                want = (ra + rad[j]) * 0.58
-                if 0.25 < d2 < want * want:
-                    d = math.sqrt(d2)
-                    push = (want - d) * 0.5 * rate
-                    ux = dx / d
-                    uz = dz / d
-                    a.x -= ux * push
-                    b.x += ux * push
-                    a.z -= uz * push / zpx
-                    b.z += uz * push / zpx
-
-        for a in self.agents:
-            a.x %= W
-            a.z = max(0.4, min(Z_MAX - 0.4, a.z))
-
-    # -- diagnostics --------------------------------------------------------
-
-    @property
-    def biomass(self):
-        return sum(a.mass for a in self.agents if a.g.kind in DRIFTER_KINDS)
-
-    def composition(self):
-        """Biomass by type. The only diagnostic that can tell whether the
-        trait model works, because total biomass looks identical whether one
-        type wins everywhere or five take turns."""
-        out = {}
-        for a in self.agents:
-            if a.doomed or a.vis <= 0.03:
+            if a.vis <= 0.03:
                 continue
-            out[a.g.kind] = out.get(a.g.kind, 0.0) + a.mass
-        return out
+            tally[a.key] = tally.get(a.key, 0) + 1
+        suit = dict(self.assemblage)
+        rows = []
+        for key, n in tally.items():
+            s = suit.get(key, 0.0)
+            # THE SAME NUMBER THE RENDERER COUNTED FROM, read out of the
+            # cache rather than recomputed. The plate's bar and the number of
+            # fish in the water are now two views of one quantity, so they
+            # cannot disagree.
+            ab = self.ab.get(key)
+            if ab is None:
+                ab = self.abundance(key, s)
+            rows.append((key, n, s, ab))
+        rows.sort(key=lambda r: -r[3])
+        return rows
 
-    @property
-    def n_zoo(self):
-        return sum(1 for a in self.agents if a.g.kind in HET_KINDS)
+    def biomass(self):
+        """Kilograms of fish drawn on the panel.
 
-    @property
-    def nit_total(self):
-        return sum(self.nit)
+        W(g) = 0.01 L(cm)^3 is the standard condition factor for a
+        roughly fusiform fish, and it is close enough for every shape here.
+        Reported rather than used: nothing in the model reads it, but a
+        number that says a gyre panel holds 200 g of fish and a Humboldt
+        panel holds nine kilos says the thing the picture is trying to."""
+        return sum(0.01 * (F.BY_KEY[a.key].len_common * a.jit) ** 3
+                   for a in self.agents if a.vis > 0.03) / 1000.0
+
+
+# The abundance scale's zero point. Set so that the scarcest species the
+# model ever shows, at the place it is scarcest, comes out near 1 -- which
+# makes every other number on the plate a multiple of "the rarest thing
+# anywhere on the voyage". Measured by tools/check_biogeography.py over the
+# whole track rather than chosen, and baked in here.
+A_SCALE = 4200.0
+
+# Mesopelagic standing stock, as a fraction of what a fully productive
+# surface carries. Near-constant by design and by observation: this is the
+# one fish community that barely knows whether it is under a gyre or an
+# upwelling, which is why in a gyre it is not merely what is left but
+# genuinely most of what is there.
+MESO_BIOMASS = 0.30
 
 
 # --------------------------------------------------------------------------
-# 6. RENDERER
+# 5. RENDERER
 # --------------------------------------------------------------------------
 
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
-TOP_M, BOT_M = 4, 28          # margins. Were 9/26 when there was a border
-                              # to clear; the footer is all that is left.
+TOP_M, BOT_M = 4, 28          # margins in CLEAN mode, where the water has
+                              # the whole panel
+PLATE_M = 90                  # ...and with the footer up. Measured, not
+                              # guessed: the title sits at H-12-10-2*19-21-5,
+                              # which is 86 px of furniture, and 90 leaves a
+                              # gap rather than a collision.
+                              # THE COLUMN HAS TO
+                              # KNOW ABOUT THE FOOTER. At a fixed margin of
+                              # 28 the axis ran to within 28 px of the bottom
+                              # edge while the footer occupied the last 70,
+                              # so everything below about 600 m was drawn
+                              # behind the caption -- which is to say the
+                              # entire mesopelagic, the half of the panel the
+                              # log axis exists to show, was invisible
+                              # whenever the plate was up. Which is 98% of
+                              # the time.
+
+_LOGSPAN = math.log1p(Z_MAX / Z0)
 
 
-def depth_to_y(z):
-    return TOP_M + (z / Z_MAX) * (H - TOP_M - BOT_M)
+def depth_to_y(z, bot=BOT_M):
+    """Metres to panel row, logarithmically. Z0 puts 200 m at half height --
+    see the note in the config, where the identity is derived."""
+    if z <= 0.0:
+        return float(TOP_M)
+    f = math.log1p(z / Z0) / _LOGSPAN
+    return TOP_M + f * (H - TOP_M - bot)
+
+
+def y_to_depth(y, bot=BOT_M):
+    """The inverse, for drawing the scale."""
+    f = (y - TOP_M) / float(H - TOP_M - bot)
+    return Z0 * (math.exp(f * _LOGSPAN) - 1.0)
 
 
 def date_label(t_days):
@@ -3004,17 +1670,15 @@ def date_label(t_days):
 class View:
     """What chrome is drawn, and nothing about the simulation.
 
-    Clean mode is not a separate render path -- it is simply every piece of
-    furniture switched off, leaving organisms, detritus and marine snow on
-    bare paper. On the hardware this whole object collapses to two bits in a
-    config byte and `toggle_clean` becomes the KEY button."""
+    Clean mode is not a separate render path -- it is every piece of
+    furniture switched off, leaving fish on bare paper. On the hardware this
+    collapses to two bits in a config byte."""
 
-    __slots__ = ("plate", "chemo", "snow", "_saved")
+    __slots__ = ("plate", "floor", "_saved")
 
-    def __init__(self, plate=True, chemo=True, snow=True):
+    def __init__(self, plate=True, floor=True):
         self.plate = plate
-        self.chemo = chemo
-        self.snow = snow
+        self.floor = floor        # the seabed, the surface and the depth scale
         self._saved = None
 
     @property
@@ -3022,8 +1686,6 @@ class View:
         return not self.plate
 
     def toggle_clean(self):
-        """Remembers what was on, so leaving clean mode restores the exact
-        view you had rather than a default."""
         if self.clean:
             self.plate = self._saved if self._saved is not None else True
             self._saved = None
@@ -3032,88 +1694,166 @@ class View:
             self.plate = False
 
 
-_STIPPLE = None
-
-
-def _stipple_points():
-    """A fixed point set with fixed ranks. Reusing it every frame means the
-    chemoautotroph haze changes density without shimmering."""
-    global _STIPPLE
-    if _STIPPLE is None:
-        r = random.Random(20260726)
-        _STIPPLE = [(r.randrange(9, W - 9), r.randrange(TOP_M + 2, H - BOT_M - 2),
-                     r.random()) for _ in range(1100)]
-    return _STIPPLE
-
-
 DEFAULT_VIEW = View()
+
+# A fixed relief profile for the seabed. Fixed, so the bottom does not
+# shimmer between frames -- the ship moves over it, but the rock does not
+# reorganise itself sixty times a second. Two octaves is enough to read as
+# ground rather than as a ruled line.
+_RELIEF = None
+
+
+def _relief():
+    global _RELIEF
+    if _RELIEF is None:
+        r = random.Random(20260727)
+        a = [r.uniform(-1.0, 1.0) for _ in range(9)]
+        b = [r.uniform(-1.0, 1.0) for _ in range(23)]
+        _RELIEF = (a, b)
+    return _RELIEF
+
+
+def _relief_at(x):
+    a, b = _relief()
+    i = x * (len(a) - 1) / float(W)
+    j = x * (len(b) - 1) / float(W)
+    i0, j0 = int(i), int(j)
+    fi, fj = i - i0, j - j0
+    va = a[i0] + (a[min(i0 + 1, len(a) - 1)] - a[i0]) * fi
+    vb = b[j0] + (b[min(j0 + 1, len(b) - 1)] - b[j0]) * fj
+    return va * 1.0 + vb * 0.38
+
+
+def draw_seabed(c, bottom_m, bot=BOT_M):
+    """The bottom, when it is in frame.
+
+    THIS IS THE MOST LEGIBLE STATEMENT OF PLACE THE PANEL MAKES. Over the
+    Patagonian shelf the seabed sits a third of the way down and the whole
+    column is above it; two days later, over the Argentine abyssal plain,
+    it is gone and the panel is open water to a thousand metres. Nothing
+    else on the water screen says 'somewhere different' that quickly.
+
+    Drawn as a ridge line with hatching below rather than a solid fill: a
+    filled black third of a 1-bit panel is a very heavy object, and on a
+    reflective display it is also the slowest thing to refresh."""
+    if bottom_m is None or bottom_m >= Z_MAX:
+        return
+    y0 = depth_to_y(bottom_m, bot)
+    if y0 >= H - bot - 2:
+        return
+    amp = max(2.0, min(9.0, (H - BOT_M - y0) * 0.10))
+    pts = []
+    for x in range(0, W + 4, 4):
+        xx = min(x, W - 1)
+        pts.append((xx, y0 + _relief_at(xx) * amp))
+    c.polyline(pts)
+    # hatching: diagonal strokes below the ridge, thinning downward, so the
+    # ground reads as solid without being solid
+    step = 7
+    for x in range(-H, W, step):
+        for k in range(0, 3):
+            sx = x + k * 2
+            ridge = y0 + _relief_at(max(0, min(W - 1, sx))) * amp
+            y1 = min(H - bot - 1, ridge + 5 + k * 6)
+            if y1 <= ridge + 1:
+                continue
+            c.line(sx, ridge + 1, sx + (y1 - ridge - 1), y1)
+
+
+def draw_surface(c, t):
+    """The sea surface: a slow swell across the top two rows."""
+    pts = []
+    for x in range(0, W + 3, 3):
+        xx = min(x, W - 1)
+        y = TOP_M + 1.6 + 1.4 * math.sin(xx * 0.055 + t * 0.35) \
+            + 0.7 * math.sin(xx * 0.021 - t * 0.21)
+        pts.append((xx, y))
+    c.polyline(pts)
+
+
+def _depth_label(c, y, s, bot=BOT_M, above=True):
+    """Right-aligned against the panel edge, which is the only way it fits.
+
+    Left at a fixed x it ran off the right-hand side: "1000M" at reading
+    size is fifty pixels and the column started thirty from the edge. The
+    label is set by its own width, not by a guess at it."""
+    w = text_width(s, scale=T_MED)
+    ty = y - text_height(T_MED) - 1 if above else y + 2
+    ty = max(TOP_M, min(H - bot - text_height(T_MED) - 1, ty))
+    label(c, W - 6 - w, ty, s, scale=T_MED, pad=2)
+    return W - 10 - w
+
+
+def draw_depth_scale(c, eco, bot=BOT_M):
+    """Two marks, and only one of them is fixed.
+
+    The 200 m line earns its place: it is where the light runs out, it is
+    the boundary every species record in the roster is written against, and
+    at dusk it is the line the scattering layer comes up through.
+
+    The other is the SEABED, labelled with its actual depth, and it is worth
+    more than any fixed tick would be. A ruler down the side would make this
+    a chart; a number that reads SEABED 71M off Patagonia and is simply
+    absent two days later in four kilometres of water makes it a window."""
+    y = depth_to_y(Z_SUN, bot)
+    if y < H - bot - 6:
+        right = _depth_label(c, y, "200M", bot)
+        for xd in range(6, int(right) - 4, 9):
+            c.line(xd, y, xd + 4, y)
+
+    b = eco.bottom
+    if b is not None and b < Z_MAX:
+        yb = depth_to_y(b, bot)
+        if TOP_M + 8 < yb < H - bot - 4:
+            _depth_label(c, yb, "SEABED %dM" % int(round(b)), bot)
 
 
 def render(eco, canvas, view=DEFAULT_VIEW, track=None, day=None):
     canvas.clear()
-    zpx = (H - TOP_M - BOT_M) / Z_MAX
+    bot = PLATE_M if view.plate else BOT_M
 
-    # chemoautotrophs: too small and too numerous to be agents, so they are
-    # drawn as a stipple whose density follows the nitrifier population.
-    # They fill the deep water that used to be dead space.
-    if view.chemo:
-        for (x, y, rank) in _stipple_points():
-            i = min(NBINS - 1, max(0, int(((y - TOP_M) / zpx) / BIN_M)))
-            if rank < eco.nit[i] * 0.30 + eco.pico[i] * 0.28:
-                canvas.px(x, y)
+    if view.floor:
+        draw_surface(canvas, eco.real_t)
+        draw_depth_scale(canvas, eco, bot)
+        draw_seabed(canvas, eco.bottom, bot)
 
-    if view.snow:
-        for s in eco.snow:
-            canvas.px(int(s[0]), int(s[1]))
-            if s[3]:
-                canvas.px(int(s[0]) + 1, int(s[1]))
-
-    for d in eco.det:
-        y = depth_to_y(d.z)
-        for (ox, oy) in d.offs:
-            canvas.px(int(d.x + ox), int(y + oy))
+    # NIGHT. Drawn as nothing at all -- there is no way to darken a
+    # reflective panel, and a stipple over the whole frame would obliterate
+    # the fish. What night does here is move the animals, which is a truer
+    # statement about the deep sea than a shading would be: the scattering
+    # layer coming up IS the night, and it is visible from across a room.
 
     for a in eco.agents:
         if a.vis <= 0.03:
             continue
-        r = visual_radius(a)
-        if r < 1.2:
+        f = F.BY_KEY[a.key]
+        L = F.draw_length(f, a.jit)
+        if L < 4.0:
             continue
-        y = depth_to_y(a.z)
-        ext = EXTENT[a.g.kind] * r
+        y = depth_to_y(a.z, bot)
+        form = F.FORM[a.key]
+        ext = L * 0.75
         # draw across the seam so nothing teleports when it wraps
         for xoff in (0.0, -W, W):
             xx = a.x + xoff
             if xx + ext < 0 or xx - ext > W:
                 continue
-            if a.g.kind == COPEPOD:
-                draw_copepod(canvas, xx, y, r, a.ang, a.g, a.gravid)
-            else:
-                DRAW[a.g.kind](canvas, xx, y, r, a.ang, a.g)
-            if a.flash > 0.25:
-                canvas.circle(xx, y, r * 1.9)
+            draw.draw_fish(canvas, xx, y, L, a.body, form, phase=a.phase)
 
     if view.plate:
         draw_plate(eco, canvas, track, day)
 
 
 def draw_plate(eco, c, track=None, day=None):
-    """The footer, and nothing else -- now at a size that can be read.
+    """The footer, and nothing else -- at a size that can be read.
 
-    This used to be a full plate (double border, depth scale, tide staff),
-    then a two-line 3x5 caption. Both are gone for the same reason: on a
-    4.2in panel at 119 ppi, 5-pixel type is a millimetre tall, which is a
-    decoration of writing rather than writing. What is left is four things,
-    each big enough to read from across a room, and nothing else:
+    Four things, each big enough to read from across a room:
 
         the voyage        who is sailing
         AT SEA / ANCHORED what is happening now
         lat and lon       where
         the bar           how far through
-
-    The debug HUD that used to sit over the water is deleted, not hidden.
-    Nine lines of instrumentation at 1 mm was the only thing on this panel
-    that assumed a reader with their nose against the glass."""
+    """
     if track is None or day is None:
         lab = date_label(eco.t)
         f = (eco.t % 365.25) / 365.25
@@ -3131,11 +1871,6 @@ def draw_plate(eco, c, track=None, day=None):
     by = H - 12                                   # the progress bar
     line_h = text_height(T_MED) + 5
 
-    # STACKED, not shouldered. Status on the left and position on the right
-    # of one line fits "AT SEA" and does not fit "ANCHORED AT CANNON ISLAND",
-    # and what a collision looks like on a 1-bit panel is not a truncation --
-    # it is two strings drawn through each other, which is worse than either.
-    # Two lines cost eighteen pixels of water and cannot collide at all.
     lines = (wrap(st, W - 2 * m) if st else []) + ([pos] if pos else [])
     y = by - 10 - line_h * len(lines)
     sc = fit_scale(lab, W - 2 * m)
@@ -3237,13 +1972,13 @@ def stills(outdir):
             render(eco, canvas, view)
             path = os.path.join(outdir, "drift_%03d.png" % targets[i])
             to_pil(canvas).resize((W * 2, H * 2), 0).save(path)
-            saved.append((path, date_label(eco.t), eco.biomass,
-                          len(eco.agents), eco.n_zoo,
-                          eco.no3[0] + eco.nh4[0], eco.nit_total))
+            saved.append((path, date_label(eco.t), eco.biomass(),
+                          len(eco.agents), len(eco.assemblage),
+                          eco.prod, eco.bottom))
             i += 1
-    for p, d, b, n, z, nut, chemo in saved:
-        print("%s  %s  biomass %5.1f  agents %2d  het %2d  surfN %4.1f  chemo %4.1f"
-              % (p, d, b, n, z, nut, chemo))
+    for p, d, b, n, taxa, prod, bot in saved:
+        print("%s  %s  biomass %5.1f  fish %2d  taxa %2d  prod %.2f  bottom %5.0fm"
+              % (p, d, b, n, taxa, prod, bot))
 
 
 LUT = None   # built lazily, preview only
@@ -3319,7 +2054,7 @@ def preview():
                 elif e.key == pygame.K_p:
                     view.plate = not view.plate
                 elif e.key == pygame.K_n:
-                    view.chemo = not view.chemo
+                    view.floor = not view.floor
                 elif e.key == pygame.K_m:
                     rot.skip()
                 elif e.key == pygame.K_v:
@@ -3427,12 +2162,15 @@ def voyage_sweep(outdir, every=30, seed=7, log_every=10, voyage="drake"):
         if eco.t >= nxt_log:
             nxt_log += log_every
             la, lo = track.position(eco.t)
-            comp = eco.composition()
+            # Standing biomass per species, on the census's absolute scale:
+            # what the MODEL believes, not what the renderer drew. This is
+            # the file tools/check_biogeography.py reads.
+            ab = {k: a for k, _, _, a in eco.census()}
             log.append((int(eco.t), la, lo, eco.env.temperature(eco.t, 2.0),
                         eco.env.mixed_layer_depth(eco.t),
                         eco.env.deep_nitrate(eco.t), eco.env.iron(eco.t),
-                        eco.biomass, len(eco.agents), eco.n_zoo)
-                       + tuple(comp.get(k, 0.0) for k in DRIFTER_KINDS)
+                        eco.prod, eco.bottom, len(eco.agents))
+                       + tuple(ab.get(k, 0.0) for k in F.ALL_KEYS)
                        + (track.status(eco.t),))
 
     cols = 9
@@ -3445,23 +2183,24 @@ def voyage_sweep(outdir, every=30, seed=7, log_every=10, voyage="drake"):
     sheet.save(path)
 
     with open(os.path.join(outdir, "voyage.csv"), "w") as f:
-        f.write("day,lat,lon,sst,mld,deepN,iron,biomass,agents,zoo,"
-                + ",".join(KIND_NAME[k] for k in DRIFTER_KINDS) + ",status\n")
+        f.write("day,lat,lon,sst,mld,deepN,iron,prod,bottom,fish,"
+                + ",".join(F.BY_KEY[k].common.lower().replace(" ", "_")
+                           for k in F.ALL_KEYS) + ",status\n")
         for r in log:
-            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%.2f,%.1f,%d,%d,"
+            f.write("%d,%.2f,%.2f,%.1f,%.0f,%.1f,%.2f,%.3f,%.0f,%d,"
                     % r[:10]
-                    + ",".join("%.1f" % v for v in r[10:-1])
+                    + ",".join("%.2f" % v for v in r[10:-1])
                     + ",%s\n" % r[-1])
 
-    bio = [r[7] for r in log]
-    n = [r[8] for r in log]
+    prod = [r[7] for r in log]
+    n = [r[9] for r in log]
     print("%s  %d panels" % (path, len(tiles)))
-    print("biomass  min %5.1f  median %5.1f  max %5.1f"
-          % (min(bio), sorted(bio)[len(bio) // 2], max(bio)))
-    print("agents   min %5d  median %5d  max %5d"
+    print("prod     min %5.2f  median %5.2f  max %5.2f"
+          % (min(prod), sorted(prod)[len(prod) // 2], max(prod)))
+    print("fish     min %5d  median %5d  max %5d"
           % (min(n), sorted(n)[len(n) // 2], max(n)))
     empty = sum(1 for v in n if v < 6)
-    print("panels with fewer than 6 organisms: %d of %d" % (empty, len(n)))
+    print("panels with fewer than 6 fish: %d of %d" % (empty, len(n)))
     return log
 
 

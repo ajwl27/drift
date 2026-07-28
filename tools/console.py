@@ -72,7 +72,7 @@ from screens import (draw_screen, WATER, MAP, KEY, GALLERY,    # noqa: E402
                      Cadence, map_radius)
 from keyplate import render_key                                # noqa: E402
 from voyage import Track                                       # noqa: E402
-from keyplate import NAMES                                     # noqa: E402
+import fish as F                                              # noqa: E402
 from ocean import Ocean                                        # noqa: E402
 
 SC = 2                       # panel upscale
@@ -89,7 +89,7 @@ PAD = 10
 # would throw it away to save forty pixels.
 COL = 800                    # both control columns plus the gap between
 SUBCOL = 390                 # one of them
-GROUP_COL = {"MOTION": 0, "GAIT": 0, "WATER": 0,
+GROUP_COL = {"MOTION": 0, "SHOAL": 0, "SCALE": 0,
              "PANEL": 1, "SCENE": 1, "DISPLAY": 1,
              "TIMING": 1, "KEY PLATE": 1}
 RULER_MM = 100               # the calibration bar's true length. Fixed.
@@ -174,22 +174,30 @@ PARAMS = [
           fmt="%.2f", unit="x", group="MOTION"),
     Param("body", "body lag", 0.02, 2.0, drift.BODY_TAU, log=True,
           fmt="%.2f", unit=" s", group="MOTION"),
-    Param("hyaw", "helix yaw", 0.0, 3.0, 1.0, fmt="%.2f", unit="x",
-          group="GAIT"),
-    Param("hrate", "helix rate", 0.1, 5.0, 1.0, log=True, fmt="%.2f",
-          unit="x", group="GAIT"),
-    Param("prate", "hop rate", 0.1, 5.0, 1.0, log=True, fmt="%.2f",
-          unit="x", group="GAIT"),
-    Param("pcoast", "hop coast", 0.1, 5.0, 1.0, log=True, fmt="%.2f",
-          unit="x", group="GAIT"),
-    Param("tumble", "shear tumble", 10.0, 600.0, drift.TUMBLE_S, log=True,
-          fmt="%.0f", unit=" s", group="GAIT"),
-    # How fast the water goes past. 1.0 is the tide as modelled and the water
-    # crosses the panel in 195 hours; 3000 crosses it in about a minute.
-    # Literal ship-speed advection would be 5,845 px/s -- see the note on
-    # DRIFT_SCALE in drift.py for why that is not an option.
-    Param("drift", "water past", 1.0, 100000.0, drift.DRIFT_SCALE, log=True,
-          fmt="%.0f", unit="x", group="WATER"),   # shown as a crossing time
+    # SHOALING is the one genuinely new behaviour, and the one most worth a
+    # slider: how hard an individual steers toward its species' collective
+    # heading, and how long that heading holds before it wanders.
+    Param("shoalk", "shoal gain", 0.1, 8.0, F.SHOAL_K, log=True, fmt="%.2f",
+          unit="x", group="SHOAL"),
+    Param("shoalt", "shoal hold", 3.0, 200.0, drift.SHOAL_TAU, log=True,
+          fmt="%.0f", unit=" s", group="SHOAL"),
+    Param("vert", "vertical swim", 0.0, 1.0, drift.VERT_DAMP, fmt="%.2f",
+          group="SHOAL"),
+    # HOW BIG A FISH IS DRAWN, which is the deliberate lie this piece tells
+    # most loudly. 1.0 is true scale, at which a 14 cm anchoveta is a third of
+    # a pixel and only the sharks are visible; 0.0 draws everything the same
+    # size, which is what the key plate does on purpose. See SIZE_EXP.
+    Param("sizex", "size exponent", 0.0, 1.0, F.SIZE_EXP, fmt="%.2f",
+          group="SCALE"),
+    Param("sizep", "size at 1cm", 2.0, 14.0, F.SIZE_PX, fmt="%.1f",
+          unit=" px", group="SCALE"),
+    # WHERE THE DEPTH AXIS BENDS. Z0 = 200/3 puts the base of the sunlit zone
+    # at exactly half the panel height; smaller stretches the surface further,
+    # larger flattens the axis toward linear.
+    Param("z0", "depth knee", 10.0, 400.0, drift.Z0, log=True, fmt="%.0f",
+          unit=" m", group="SCALE"),
+    Param("nmax", "shoal max", 4.0, 90.0, float(drift.AB_N_MAX), fmt="%.0f",
+          unit=" fish", group="SCALE"),
     Param("fps", "frame rate", 0.25, 51.0, float(drift.TARGET_FPS), log=True,
           fmt="%.2f", unit=" fps", group="PANEL"),
     # 1.0 is the piece's real setting: one second per second, the whole
@@ -227,36 +235,23 @@ PARAMS = [
     # name, and those want different amounts of movement.
     Param("krate", "plate: rate", 0.05, 4.0, keyplate.KEY_RATE, log=True,
           fmt="%.2f", unit="x", group="KEY PLATE"),
-    Param("kyaw", "plate: yaw", 0.0, 2.0, keyplate.KEY_YAW, fmt="%.2f",
-          unit="x", group="KEY PLATE"),
-    Param("ksurge", "plate: sway", 0.0, 4.0, keyplate.KEY_SURGE, fmt="%.2f",
-          unit="x", group="KEY PLATE"),
-    Param("kbeat", "plate: beat", 0.05, 3.0, keyplate.KEY_BEAT, log=True,
-          fmt="%.2f", unit="x", group="KEY PLATE"),
+    Param("kyaw", "plate: roll", 0.0, 0.6, keyplate.KEY_PITCH, fmt="%.3f",
+          unit=" rad", group="KEY PLATE"),
+    Param("ksurge", "plate: sway", 0.0, 0.3, keyplate.KEY_SWAY, fmt="%.3f",
+          unit=" BL", group="KEY PLATE"),
+
     # the base period of the roll, not a full turn: the roll reverses, so
     # "seconds per revolution" stopped meaning anything
-    Param("kspin", "plate: roll", 5.0, 300.0, keyplate.KEY_SPIN_S, log=True,
-          fmt="%.0f", unit=" s", group="KEY PLATE"),
+
 ]
 DEFERRED = ("day", "seed")
 PANEL_PPI = math.hypot(W, H) / PANEL_DIAG_IN
 PMAP = {p.key: p for p in PARAMS}
 
-# the published per-species gait values, kept so the multipliers above have
-# something to multiply. Copied once, at import, before anything is touched.
-BASE_YAW = dict(drift.HELIX_YAW)
-BASE_HZ = dict(drift.HELIX_HZ)
-BASE_HOP = dict(drift.HOP_HZ)
-BASE_COAST = dict(drift.COAST_S)
-
-# kind constant -> the identifier drift.py calls it by, so the exported block
-# is paste-ready rather than merely informative. NAMES would give the species
-# ("MICROMONAS"); the source calls that one FLAGELLATE.
-KIND_ID = {}
-for _name, _val in vars(drift).items():
-    if (isinstance(_val, int) and not isinstance(_val, bool)
-            and _name.isupper() and _val in NAMES and _val not in KIND_ID):
-        KIND_ID[_val] = _name
+# The per-species gait multiplier tables are gone with the plankton. Fish
+# swimming is one body wave whose start point IS the swimming mode (draw.py),
+# so there is nothing per-species left to scale -- which is most of the
+# argument for having done it that way.
 
 
 def ruler_px(ppi):
@@ -273,23 +268,22 @@ def apply_state(st, eco):
     immediately before each ecosystem is stepped, which is what lets the two
     sides of an A/B differ in every parameter rather than only those two."""
     drift.BODY_TAU = st["body"]
-    drift.DRIFT_SCALE = st["drift"]
-    drift.TUMBLE_S = st["tumble"]
-    for k, v in BASE_YAW.items():
-        drift.HELIX_YAW[k] = v * st["hyaw"]
-    for k, v in BASE_HZ.items():
-        drift.HELIX_HZ[k] = v * st["hrate"]
-    for k, v in BASE_HOP.items():
-        drift.HOP_HZ[k] = v * st["prate"]
-    for k, v in BASE_COAST.items():
-        drift.COAST_S[k] = v * st["pcoast"]
+    drift.SHOAL_TAU = st["shoalt"]
+    drift.VERT_DAMP = st["vert"]
+    drift.AB_N_MAX = int(round(st["nmax"]))
+    F.SHOAL_K = st["shoalk"]
+    F.SIZE_EXP = st["sizex"]
+    F.SIZE_PX = st["sizep"]
+    # THE DEPTH AXIS AND ITS PRECOMPUTED SPAN MOVE TOGETHER. _LOGSPAN is
+    # derived from Z0 at import; setting one without the other gives an axis
+    # that is stretched at the top and does not reach the bottom.
+    drift.Z0 = st["z0"]
+    drift._LOGSPAN = math.log1p(drift.Z_MAX / drift.Z0)
     # the plate reads these as module constants, which is exactly why the
     # swim sliders used to do nothing to it -- those are per-Ecosystem
     keyplate.KEY_RATE = st["krate"]
-    keyplate.KEY_YAW = st["kyaw"]
-    keyplate.KEY_SURGE = st["ksurge"]
-    keyplate.KEY_BEAT = st["kbeat"]
-    keyplate.KEY_SPIN_S = st["kspin"]
+    keyplate.KEY_PITCH = st["kyaw"]
+    keyplate.KEY_SWAY = st["ksurge"]
     # SWIM_SCALE is per-Ecosystem in the water and a module constant on the
     # plate, so it has to be set in both places or the two disagree
     drift.SWIM_SCALE = st["swim"]
@@ -605,15 +599,28 @@ def run(seed=5, day=420.0):
                  "#   key=%.0f, globe=%.1f, dolly=%.1f, chart=%.1f"
                  % (live.st["key"], live.st["globe"], live.st["dolly"],
                     live.st["chart"]),
-                 "", "# gait multipliers, folded into the per-species tables:"]
-        for name, base, mult in (("HELIX_YAW", BASE_YAW, live.st["hyaw"]),
-                                 ("HELIX_HZ", BASE_HZ, live.st["hrate"]),
-                                 ("HOP_HZ", BASE_HOP, live.st["prate"]),
-                                 ("COAST_S", BASE_COAST, live.st["pcoast"])):
-            body = ", ".join("%s: %.3f" % (KIND_ID.get(k, str(k)), v * mult)
-                             for k, v in base.items())
-            lines.append("%s = {%s}   # x%.2f" % (name, body, mult))
-        lines.append("TUMBLE_S = %.0f" % live.st["tumble"])
+                 "",
+                 "SHOAL_TAU = %.0f" % live.st["shoalt"],
+                 "VERT_DAMP = %.3f" % live.st["vert"],
+                 "AB_N_MAX = %d" % int(round(live.st["nmax"])),
+                 "",
+                 "# fish.py:",
+                 "SHOAL_K = %.2f" % live.st["shoalk"],
+                 "SIZE_EXP = %.3f" % live.st["sizex"],
+                 "SIZE_PX = %.2f" % live.st["sizep"],
+                 "",
+                 "# drift.py, the depth axis. Z0 = 200/3 puts the base of the",
+                 "# sunlit zone at exactly half the panel height, so if this",
+                 "# has moved off 66.7 it is worth knowing what it now means:",
+                 "Z0 = %.1f   # 200 m sits at %.0f%% of panel height"
+                 % (live.st["z0"],
+                    100.0 * math.log1p(200.0 / live.st["z0"])
+                    / math.log1p(drift.Z_MAX / live.st["z0"])),
+                 "",
+                 "# keyplate.py:",
+                 "KEY_RATE = %.2f" % live.st["krate"],
+                 "KEY_PITCH = %.3f" % live.st["kyaw"],
+                 "KEY_SWAY = %.3f" % live.st["ksurge"]]
         txt = "\n".join(lines)
         os.makedirs("docs", exist_ok=True)
         with open("docs/tuned_values.txt", "w") as fh:
